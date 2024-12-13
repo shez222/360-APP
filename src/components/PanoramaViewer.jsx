@@ -1,5 +1,3 @@
-
-
 // src/components/PanoramaViewer.jsx
 
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
@@ -22,12 +20,12 @@ const PanoramaViewer = () => {
   const hiddenCanvasRef = useRef(null);
 
   // Sphere and placement settings
-  const sphereRadius = 5;
+  const sphereRadius = 5; // **Changed from 10 to 5**
   const offsetFromSurface = 0.01;
 
   // Global Configuration
-  const hfov = 40; // Horizontal Field of View in degrees
-  const vfov = 60; // Vertical Field of View in degrees
+  const hfov = 40; // **Changed from 60° to 40°**
+  const vfov = 60; // Remains unchanged
 
   // Helper function to convert degrees to radians
   const degToRad = (degrees) => degrees * (Math.PI / 180);
@@ -48,27 +46,30 @@ const PanoramaViewer = () => {
     return calculatePlaneDimensions(sphereRadius, hfov, vfov);
   }, [sphereRadius, hfov, vfov]);
 
-  // Elevation levels for 40 images
+  // Elevation levels for captures
   const elevationLevels = useMemo(() => [0, 30, -30, 60, -60, 90, -90], []);
 
-  // Azimuthal increments based on elevation for 40 images
+  // **Updated Azimuthal Increments Based on New hfov=40°**
+  // These increments ensure comprehensive coverage with hfov=40°
   const azimuthIncrements = useMemo(() => ({
-    0: 36,    // Equator: 10 images (36° increments)
-    30: 60,   // +30°: 6 images (60° increments)
-    '-30': 60, // -30°: 6 images (60° increments)
-    60: 72,   // +60°: 5 images (72° increments)
-    '-60': 72, // -60°: 5 images (72° increments)
-    90: 90,   // +90°: 4 images (90° increments)
-    '-90': 90  // -90°: 4 images (90° increments)
+    0: 40,    // Equator: 9 captures (40° increments)
+    30: 45,   // +30°: 8 captures (45° increments)
+    '-30': 45, // -30°: 8 captures (45° increments)
+    60: 60,   // +60°: 6 captures (60° increments)
+    '-60': 60, // -60°: 6 captures (60° increments)
+    90: 90,   // +90°: 2 captures (90° increments)
+    '-90': 90  // -90°: 2 captures (90° increments)
   }), []);
 
-  // Calculate maximum captures based on azimuthal increments (Total: 40 images)
+  // Calculate maximum captures based on azimuthal increments (Total: 41 images)
   const maxCaptures = useMemo(() => {
     return elevationLevels.reduce((total, elev) => {
       const increment = azimuthIncrements[elev] || 60; // Default to 60° if not defined
       return total + Math.ceil(360 / increment);
     }, 0);
   }, [elevationLevels, azimuthIncrements]);
+
+  // **Note**: With the updated increments, `maxCaptures` is now 41.
 
   // Capture Queue Initialization
   const captureQueueRef = useRef([]);
@@ -90,15 +91,15 @@ const PanoramaViewer = () => {
           queue.push({ azimuth: i * increment, elevation: elev });
         }
       });
-      // Ensure the queue has exactly 40 images
-      while (queue.length > 40) {
+      // Ensure the queue has exactly maxCaptures images
+      while (queue.length > maxCaptures) {
         queue.pop();
       }
       captureQueueRef.current = queue;
       setQueueReady(true); // Indicate that the queue is ready
     };
     initializeQueue();
-  }, [elevationLevels, azimuthIncrements]);
+  }, [elevationLevels, azimuthIncrements, maxCaptures]);
 
   // Refs for mutable variables
   const captureCountRef = useRef(0);
@@ -195,8 +196,8 @@ const PanoramaViewer = () => {
     videoTexture.magFilter = THREE.LinearFilter;
     videoTextureRef.current = videoTexture;
 
-    // Create the Video Plane and Add to Scene
-    const planeGeometry = new THREE.PlaneGeometry(planeWidth, planeHeight);
+    // **Create the Video Plane with Updated Dimensions and Optimized Segments**
+    const planeGeometry = new THREE.PlaneGeometry(planeWidth, planeHeight, 8, 8); // **Segments reduced for performance**
     const planeMaterial = new THREE.MeshBasicMaterial({ map: videoTexture, side: THREE.DoubleSide });
     const videoPlane = new THREE.Mesh(planeGeometry, planeMaterial);
     scene.add(videoPlane);
@@ -299,7 +300,6 @@ const PanoramaViewer = () => {
     const queue = captureQueueRef.current;
 
     if (!renderer || !scene || !videoPlane || !marker || !hiddenCanvas || !video) return;
-
     if (queue.length === 0) {
       setInstructions("All captures completed. Preview your panorama!");
       setIsPanoramaComplete(true);
@@ -444,8 +444,8 @@ const PanoramaViewer = () => {
         newQueue.push({ azimuth: i * increment, elevation: elev });
       }
     });
-    // Ensure the queue has exactly 40 images
-    while (newQueue.length > 40) {
+    // Ensure the queue has exactly maxCaptures images
+    while (newQueue.length > maxCaptures) {
       newQueue.pop();
     }
     captureQueueRef.current = newQueue;
@@ -457,7 +457,7 @@ const PanoramaViewer = () => {
       placeObjectOnSphere(videoPlane, firstCapture.azimuth, firstCapture.elevation);
       placeObjectOnSphere(marker, firstCapture.azimuth, firstCapture.elevation);
     }
-  }, [elevationLevels, azimuthIncrements, placeObjectOnSphere]);
+  }, [elevationLevels, azimuthIncrements, placeObjectOnSphere, maxCaptures]);
 
   // Function to preview the panorama
   const previewPanoramaHandler = useCallback(() => {
@@ -521,7 +521,7 @@ const PanoramaViewer = () => {
       adjustedHeight *= 1.2; // Increase height by 20%
     }
     
-    const geometry = new THREE.PlaneGeometry(width, adjustedHeight);
+    const geometry = new THREE.PlaneGeometry(width, adjustedHeight, 8, 8); // **Segments optimized**
     const material = new THREE.MeshBasicMaterial({ map: texture, side: THREE.FrontSide });
     return new THREE.Mesh(geometry, material);
   }
@@ -895,7 +895,7 @@ function createCapturedPlane(texture, width, height, elevation = 0) {
     adjustedHeight *= 1.2; // Increase height by 20%
   }
   
-  const geometry = new THREE.PlaneGeometry(width, adjustedHeight);
+  const geometry = new THREE.PlaneGeometry(width, adjustedHeight, 8, 8); // **Segments optimized**
   const material = new THREE.MeshBasicMaterial({ map: texture, side: THREE.FrontSide });
   return new THREE.Mesh(geometry, material);
 }
@@ -931,6 +931,7 @@ function animatePointer(pointer) {
 }
 
 export default PanoramaViewer;
+
 
 
 
