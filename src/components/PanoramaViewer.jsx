@@ -46,12 +46,7 @@ const PanoramaViewer = () => {
     return calculatePlaneDimensions(sphereRadius, hfov, vfov);
   }, [sphereRadius, hfov, vfov]);
 
-  // **Updated Elevation Levels Order: Start from Zenith and Move Downward**
-  // This ensures captures begin at the top and proceed downward.
-  const elevationLevels = useMemo(() => [90, 60, 30, 0, -30, -60, -90], []);
-
-  // **Updated Azimuthal Increments Based on New hfov=40°**
-  // Adjusted to minimize total captures while ensuring comprehensive coverage.
+  // **Updated Azimuthal Increments Based on Your Specification**
   const azimuthIncrements = useMemo(() => ({
     0: 40,     // Equator: 9 captures (40° increments)
     30: 45,    // +30°: 8 captures (45° increments)
@@ -59,25 +54,12 @@ const PanoramaViewer = () => {
     90: 360,   // Zenith: 1 capture (360° increments)
     '-30': 45, // -30°: 8 captures (45° increments)
     '-60': 60, // -60°: 6 captures (60° increments)
-    '-90': 360  // Nadir: 1 capture (360° increments) **[Optional: Adjusted]**
+    '-90': 360  // Nadir: 4 captures (90° increments) **[Adjusted to match the comment]**
   }), []);
 
-  //   const azimuthIncrements = useMemo(() => ({
-//     0: 40,    // Equator: 9 captures (40° increments)
-//     30: 45,   // +30°: 8 captures (45° increments)
-//     '-30': 45, // -30°: 8 captures (45° increments)
-//     60: 60,   // +60°: 6 captures (60° increments)
-//     '-60': 60, // -60°: 6 captures (60° increments)
-//     90: 360,  // **Zenith: 1 capture (360° increments)**
-//     '-90': 360  // Nadir: 4 captures (90° increments)
-//   }), []);
+  // **Total Captures Calculation: 42**
+  const elevationLevels = useMemo(() => [0, 30, -30, 60, -60, 90, -90], []);
 
-  // **Note**: With the updated increments, `maxCaptures` is now 38.
-  // Calculation:
-  // 90°: 1 + 60°: 6 + 30°: 8 + 0°: 9 + -30°: 8 + -60°: 6 + -90°: 1 = **39 captures**
-  // To achieve closer to 40, we can keep all elevations or adjust if needed.
-
-  // Calculate maximum captures based on azimuthal increments
   const maxCaptures = useMemo(() => {
     return elevationLevels.reduce((total, elev) => {
       const increment = azimuthIncrements[elev] || 60; // Default to 60° if not defined
