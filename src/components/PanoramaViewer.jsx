@@ -307,7 +307,103 @@ const PanoramaViewer = () => {
   }, []);
 
   // Perform Capture Function
-  const performCapture = useCallback(async (isAuto) => {
+  // const performCapture = useCallback(async (isAuto) => {
+  //   const renderer = rendererRef.current;
+  //   const scene = sceneRef.current;
+  //   const videoPlane = videoPlaneRef.current;
+  //   const marker = markerRef.current;
+  //   const hiddenCanvas = hiddenCanvasRef.current;
+  //   const video = videoTextureRef.current?.image;
+  //   const queue = captureQueueRef.current;
+
+  //   if (!renderer || !scene || !videoPlane || !marker || !hiddenCanvas || !video) return;
+
+  //   if (queue.length === 0) {
+  //     setInstructions("All captures completed. Starting stitching process...");
+  //     setIsStitching(true);
+  //     await stitchImages(); // Start stitching after all captures
+  //     return;
+  //   }
+
+  //   const { azimuth, elevation } = queue.shift(); // Dequeue the next capture
+
+  //   // Draw the current video frame to the hidden canvas
+  //   const ctx = hiddenCanvas.getContext('2d');
+  //   ctx.drawImage(video, 0, 0, hiddenCanvas.width, hiddenCanvas.height);
+
+  //   // Get the Data URL from the Hidden Canvas
+  //   const dataURL = hiddenCanvas.toDataURL('image/png');
+
+  //   // Convert Data URL to Image Element
+  //   const imgElement = await dataURLToImageElement(dataURL);
+
+  //   // Create a texture from the captured image
+  //   const capturedTexture = new THREE.Texture(imgElement);
+  //   capturedTexture.needsUpdate = true;
+
+  //   // Create a plane for the captured image with FrontSide
+  //   const capturedPlane = createCapturedPlane(capturedTexture, planeWidth, planeHeight, elevation);
+  //   capturedPlane.userData.isCaptured = true; // Tag for potential removal/reset
+  //   scene.add(capturedPlane);
+
+  //   // Place the captured plane on the sphere at the current azimuth and elevation
+  //   placeObjectOnSphere(capturedPlane, azimuth, elevation);
+
+  //   // Store the captured plane reference
+  //   capturedPlanesRef.current.push(capturedPlane);
+
+  //   // Store thumbnail for UI
+  //   setCapturedThumbnails(prev => [...prev, dataURL]);
+
+  //   // If there is a previous captured plane, add a middle pointer to it
+  //   if (capturedPlanesRef.current.length > 1) {
+  //     const previousPlane = capturedPlanesRef.current[capturedPlanesRef.current.length - 2];
+  //     const nextCapture = queue[0]; // Peek at the next capture without dequeuing
+
+  //     if (nextCapture) {
+  //       addMiddlePointer(previousPlane, nextCapture.azimuth, nextCapture.elevation);
+  //     }
+  //   }
+
+  //   console.log(`Captured image placed at Azimuth: ${azimuth}°, Elevation: ${elevation}°`);
+
+  //   // Increment capture count
+  //   captureCountRef.current += 1;
+  //   setCaptureCount(captureCountRef.current); // Update state for UI
+
+  //   // Update Instructions
+  //   if (!isAuto) {
+  //     setInstructions("Image captured. Rotate the device to align the next marker for automatic capture.");
+  //     firstCaptureDoneRef.current = true;
+  //   } else {
+  //     setInstructions(`Image ${captureCountRef.current} captured. Rotate to align and auto-capture again.`);
+  //   }
+
+  //   // Move Video Plane and Marker to New Azimuth and Elevation
+  //   if (queue.length > 0) { // Only move if there are more captures
+  //     const nextCapture = queue[0];
+  //     placeObjectOnSphere(videoPlaneRef.current, nextCapture.azimuth, nextCapture.elevation);
+  //     placeObjectOnSphere(marker, nextCapture.azimuth, nextCapture.elevation);
+  //   }
+
+  //   // Flash Effect for Visual Feedback
+  //   setShowFlash(true);
+  //   setTimeout(() => setShowFlash(false), 200); // Flash duration: 200ms
+
+  //   // Optional: Haptic Feedback
+  //   if (navigator.vibrate) {
+  //     navigator.vibrate(100); // Vibrate for 100ms
+  //   }
+
+  //   // Check if all captures are done
+  //   if (captureCountRef.current >= maxCaptures) {
+  //     setInstructions("All captures completed. Starting stitching process...");
+  //     setIsStitching(true);
+  //     await stitchImages(); // Start stitching after all captures
+  //   }
+  // }, [planeHeight, planeWidth, maxCaptures]);
+
+  const performCapture = useCallback((isAuto) => {
     const renderer = rendererRef.current;
     const scene = sceneRef.current;
     const videoPlane = videoPlaneRef.current;
@@ -319,90 +415,61 @@ const PanoramaViewer = () => {
     if (!renderer || !scene || !videoPlane || !marker || !hiddenCanvas || !video) return;
 
     if (queue.length === 0) {
-      setInstructions("All captures completed. Starting stitching process...");
-      setIsStitching(true);
-      await stitchImages(); // Start stitching after all captures
-      return;
+        setInstructions("All captures completed. Preview your panorama!");
+        setIsPanoramaComplete(true);
+        return;
     }
 
     const { azimuth, elevation } = queue.shift(); // Dequeue the next capture
 
-    // Draw the current video frame to the hidden canvas
+    // Set canvas resolution to match video feed
+    hiddenCanvas.width = video.videoWidth || 1280;
+    hiddenCanvas.height = video.videoHeight || 720;
+
     const ctx = hiddenCanvas.getContext('2d');
     ctx.drawImage(video, 0, 0, hiddenCanvas.width, hiddenCanvas.height);
 
-    // Get the Data URL from the Hidden Canvas
     const dataURL = hiddenCanvas.toDataURL('image/png');
 
-    // Convert Data URL to Image Element
-    const imgElement = await dataURLToImageElement(dataURL);
+    return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+            const capturedTexture = new THREE.Texture(img);
+            capturedTexture.needsUpdate = true;
 
-    // Create a texture from the captured image
-    const capturedTexture = new THREE.Texture(imgElement);
-    capturedTexture.needsUpdate = true;
+            const capturedPlane = createCapturedPlane(capturedTexture, planeWidth, planeHeight, elevation);
+            capturedPlane.userData.isCaptured = true;
+            scene.add(capturedPlane);
 
-    // Create a plane for the captured image with FrontSide
-    const capturedPlane = createCapturedPlane(capturedTexture, planeWidth, planeHeight, elevation);
-    capturedPlane.userData.isCaptured = true; // Tag for potential removal/reset
-    scene.add(capturedPlane);
+            placeObjectOnSphere(capturedPlane, azimuth, elevation);
+            capturedPlanesRef.current.push(capturedPlane);
 
-    // Place the captured plane on the sphere at the current azimuth and elevation
-    placeObjectOnSphere(capturedPlane, azimuth, elevation);
+            captureCountRef.current += 1;
+            setCaptureCount(captureCountRef.current);
 
-    // Store the captured plane reference
-    capturedPlanesRef.current.push(capturedPlane);
+            if (!isAuto) {
+                setInstructions("Image captured. Rotate to align the next marker.");
+                firstCaptureDoneRef.current = true;
+            }
 
-    // Store thumbnail for UI
-    setCapturedThumbnails(prev => [...prev, dataURL]);
+            // Move marker and video plane to the next capture position
+            if (queue.length > 0) {
+                const nextCapture = queue[0];
+                placeObjectOnSphere(videoPlaneRef.current, nextCapture.azimuth, nextCapture.elevation);
+                placeObjectOnSphere(marker, nextCapture.azimuth, nextCapture.elevation);
+            }
 
-    // If there is a previous captured plane, add a middle pointer to it
-    if (capturedPlanesRef.current.length > 1) {
-      const previousPlane = capturedPlanesRef.current[capturedPlanesRef.current.length - 2];
-      const nextCapture = queue[0]; // Peek at the next capture without dequeuing
+            setShowFlash(true);
+            setTimeout(() => setShowFlash(false), 200);
 
-      if (nextCapture) {
-        addMiddlePointer(previousPlane, nextCapture.azimuth, nextCapture.elevation);
-      }
-    }
+            resolve();
+        };
+        img.src = dataURL;
+    });
+}, [planeHeight, planeWidth, maxCaptures]);
 
-    console.log(`Captured image placed at Azimuth: ${azimuth}°, Elevation: ${elevation}°`);
 
-    // Increment capture count
-    captureCountRef.current += 1;
-    setCaptureCount(captureCountRef.current); // Update state for UI
-
-    // Update Instructions
-    if (!isAuto) {
-      setInstructions("Image captured. Rotate the device to align the next marker for automatic capture.");
-      firstCaptureDoneRef.current = true;
-    } else {
-      setInstructions(`Image ${captureCountRef.current} captured. Rotate to align and auto-capture again.`);
-    }
-
-    // Move Video Plane and Marker to New Azimuth and Elevation
-    if (queue.length > 0) { // Only move if there are more captures
-      const nextCapture = queue[0];
-      placeObjectOnSphere(videoPlaneRef.current, nextCapture.azimuth, nextCapture.elevation);
-      placeObjectOnSphere(marker, nextCapture.azimuth, nextCapture.elevation);
-    }
-
-    // Flash Effect for Visual Feedback
-    setShowFlash(true);
-    setTimeout(() => setShowFlash(false), 200); // Flash duration: 200ms
-
-    // Optional: Haptic Feedback
-    if (navigator.vibrate) {
-      navigator.vibrate(100); // Vibrate for 100ms
-    }
-
-    // Check if all captures are done
-    if (captureCountRef.current >= maxCaptures) {
-      setInstructions("All captures completed. Starting stitching process...");
-      setIsStitching(true);
-      await stitchImages(); // Start stitching after all captures
-    }
-  }, [planeHeight, planeWidth, maxCaptures]);
-
+  
   // Helper Function to Place Objects on the Sphere
   const placeObjectOnSphere = useCallback((obj, azimuthDeg, elevationDeg) => {
     const r = sphereRadius - offsetFromSurface;
