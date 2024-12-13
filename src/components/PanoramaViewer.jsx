@@ -1,4 +1,3 @@
-
 // src/components/PanoramaViewer.jsx
 
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
@@ -283,7 +282,7 @@ const PanoramaViewer = () => {
   }, []);
 
   // Throttle Function to Prevent Rapid Captures
-  const throttleCapture = (func, limit) => {
+  const throttleCapture = useCallback((func, limit) => {
     let inThrottle;
     return function(...args) {
       if (!inThrottle) {
@@ -292,7 +291,7 @@ const PanoramaViewer = () => {
         setTimeout(() => inThrottle = false, limit);
       }
     };
-  };
+  }, []);
 
   // Capture Image Function
   const captureImage = useCallback(() => {
@@ -316,7 +315,10 @@ const PanoramaViewer = () => {
     const video = videoTextureRef.current?.image;
     const queue = captureQueueRef.current;
 
-    if (!renderer || !scene || !videoPlane || !marker || !hiddenCanvas || !video) return;
+    if (!renderer || !scene || !videoPlane || !marker || !hiddenCanvas || !video) {
+      console.warn('Missing components for capture.');
+      return;
+    }
 
     if (queue.length === 0) {
       setInstructions("All captures completed. Starting stitching process...");
@@ -327,79 +329,84 @@ const PanoramaViewer = () => {
 
     const { azimuth, elevation } = queue.shift(); // Dequeue the next capture
 
-    // Draw the current video frame to the hidden canvas
-    const ctx = hiddenCanvas.getContext('2d');
-    ctx.drawImage(video, 0, 0, hiddenCanvas.width, hiddenCanvas.height);
+    try {
+      // Draw the current video frame to the hidden canvas
+      const ctx = hiddenCanvas.getContext('2d');
+      ctx.drawImage(video, 0, 0, hiddenCanvas.width, hiddenCanvas.height);
 
-    // Get the Data URL from the Hidden Canvas
-    const dataURL = hiddenCanvas.toDataURL('image/png');
+      // Get the Data URL from the Hidden Canvas
+      const dataURL = hiddenCanvas.toDataURL('image/png');
 
-    // Convert Data URL to Image Element
-    const imgElement = await dataURLToImageElement(dataURL);
+      // Convert Data URL to Image Element
+      const imgElement = await dataURLToImageElement(dataURL);
 
-    // Create a texture from the captured image
-    const capturedTexture = new THREE.Texture(imgElement);
-    capturedTexture.needsUpdate = true;
+      // Create a texture from the captured image
+      const capturedTexture = new THREE.Texture(imgElement);
+      capturedTexture.needsUpdate = true;
 
-    // Create a plane for the captured image with FrontSide
-    const capturedPlane = createCapturedPlane(capturedTexture, planeWidth, planeHeight, elevation);
-    capturedPlane.userData.isCaptured = true; // Tag for potential removal/reset
-    scene.add(capturedPlane);
+      // Create a plane for the captured image with FrontSide
+      const capturedPlane = createCapturedPlane(capturedTexture, planeWidth, planeHeight, elevation);
+      capturedPlane.userData.isCaptured = true; // Tag for potential removal/reset
+      scene.add(capturedPlane);
 
-    // Place the captured plane on the sphere at the current azimuth and elevation
-    placeObjectOnSphere(capturedPlane, azimuth, elevation);
+      // Place the captured plane on the sphere at the current azimuth and elevation
+      placeObjectOnSphere(capturedPlane, azimuth, elevation);
 
-    // Store the captured plane reference
-    capturedPlanesRef.current.push(capturedPlane);
+      // Store the captured plane reference
+      capturedPlanesRef.current.push(capturedPlane);
 
-    // Store thumbnail for UI
-    setCapturedThumbnails(prev => [...prev, dataURL]);
+      // Store thumbnail for UI
+      setCapturedThumbnails(prev => [...prev, dataURL]);
 
-    // If there is a previous captured plane, add a middle pointer to it
-    if (capturedPlanesRef.current.length > 1) {
-      const previousPlane = capturedPlanesRef.current[capturedPlanesRef.current.length - 2];
-      const nextCapture = queue[0]; // Peek at the next capture without dequeuing
+      // If there is a previous captured plane, add a middle pointer to it
+      if (capturedPlanesRef.current.length > 1) {
+        const previousPlane = capturedPlanesRef.current[capturedPlanesRef.current.length - 2];
+        const nextCapture = queue[0]; // Peek at the next capture without dequeuing
 
-      if (nextCapture) {
-        addMiddlePointer(previousPlane, nextCapture.azimuth, nextCapture.elevation);
+        if (nextCapture) {
+          addMiddlePointer(previousPlane, nextCapture.azimuth, nextCapture.elevation);
+        }
       }
-    }
 
-    console.log(`Captured image placed at Azimuth: ${azimuth}°, Elevation: ${elevation}°`);
+      console.log(`Captured image placed at Azimuth: ${azimuth}°, Elevation: ${elevation}°`);
 
-    // Increment capture count
-    captureCountRef.current += 1;
-    setCaptureCount(captureCountRef.current); // Update state for UI
+      // Increment capture count
+      captureCountRef.current += 1;
+      setCaptureCount(captureCountRef.current); // Update state for UI
 
-    // Update Instructions
-    if (!isAuto) {
-      setInstructions("Image captured. Rotate the device to align the next marker for automatic capture.");
-      firstCaptureDoneRef.current = true;
-    } else {
-      setInstructions(`Image ${captureCountRef.current} captured. Rotate to align and auto-capture again.`);
-    }
+      // Update Instructions
+      if (!isAuto) {
+        setInstructions("Image captured. Rotate the device to align the next marker for automatic capture.");
+        firstCaptureDoneRef.current = true;
+      } else {
+        setInstructions(`Image ${captureCountRef.current} captured. Rotate to align and auto-capture again.`);
+      }
 
-    // Move Video Plane and Marker to New Azimuth and Elevation
-    if (queue.length > 0) { // Only move if there are more captures
-      const nextCapture = queue[0];
-      placeObjectOnSphere(videoPlaneRef.current, nextCapture.azimuth, nextCapture.elevation);
-      placeObjectOnSphere(marker, nextCapture.azimuth, nextCapture.elevation);
-    }
+      // Move Video Plane and Marker to New Azimuth and Elevation
+      if (queue.length > 0) { // Only move if there are more captures
+        const nextCapture = queue[0];
+        placeObjectOnSphere(videoPlaneRef.current, nextCapture.azimuth, nextCapture.elevation);
+        placeObjectOnSphere(marker, nextCapture.azimuth, nextCapture.elevation);
+      }
 
-    // Flash Effect for Visual Feedback
-    setShowFlash(true);
-    setTimeout(() => setShowFlash(false), 200); // Flash duration: 200ms
+      // Flash Effect for Visual Feedback
+      setShowFlash(true);
+      setTimeout(() => setShowFlash(false), 200); // Flash duration: 200ms
 
-    // Optional: Haptic Feedback
-    if (navigator.vibrate) {
-      navigator.vibrate(100); // Vibrate for 100ms
-    }
+      // Optional: Haptic Feedback
+      if (navigator.vibrate) {
+        navigator.vibrate(100); // Vibrate for 100ms
+      }
 
-    // Check if all captures are done
-    if (captureCountRef.current >= maxCaptures) {
-      setInstructions("All captures completed. Starting stitching process...");
-      setIsStitching(true);
-      await stitchImages(); // Start stitching after all captures
+      // Check if all captures are done
+      if (captureCountRef.current >= maxCaptures) {
+        setInstructions("All captures completed. Starting stitching process...");
+        setIsStitching(true);
+        await stitchImages(); // Start stitching after all captures
+      }
+    } catch (error) {
+      console.error('Error during capture:', error);
+      setInstructions("An error occurred during capture. Please try again.");
     }
   }, [planeHeight, planeWidth, maxCaptures]);
 
@@ -504,14 +511,14 @@ const PanoramaViewer = () => {
   /** Helper Functions **/
 
   // Function to create the red marker
-  function createMarker() {
+  const createMarker = () => {
     const markerGeometry = new THREE.SphereGeometry(0.1, 16, 16);
     const markerMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000 });
     return new THREE.Mesh(markerGeometry, markerMaterial);
-  }
+  };
 
   // Function to create a captured image plane
-  function createCapturedPlane(texture, width, height, elevation = 0) {
+  const createCapturedPlane = (texture, width, height, elevation = 0) => {
     // Adjust plane height based on elevation to account for perspective distortion (optional)
     let adjustedHeight = height;
     if (Math.abs(elevation) > 60) { // Near the poles
@@ -521,10 +528,10 @@ const PanoramaViewer = () => {
     const geometry = new THREE.PlaneGeometry(width, adjustedHeight);
     const material = new THREE.MeshBasicMaterial({ map: texture, side: THREE.FrontSide });
     return new THREE.Mesh(geometry, material);
-  }
+  };
 
   // Function to add a middle pointer to a captured plane
-  function addMiddlePointer(capturedPlane, azimuthDeg, elevationDeg) {
+  const addMiddlePointer = (capturedPlane, azimuthDeg, elevationDeg) => {
     const pointerGeometry = new THREE.SphereGeometry(0.05, 16, 16);
     const pointerMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff00 }); // Green color for pointers
     const pointer = new THREE.Mesh(pointerGeometry, pointerMaterial);
@@ -538,10 +545,10 @@ const PanoramaViewer = () => {
 
     // Animate the pointer (pulsating effect)
     animatePointer(pointer);
-  }
+  };
 
   // Function to animate the pointer (pulsating effect)
-  function animatePointer(pointer) {
+  const animatePointer = (pointer) => {
     const scaleFactor = 1.2;
     const duration = 1000; // 1 second
 
@@ -551,24 +558,24 @@ const PanoramaViewer = () => {
       .yoyo(true)
       .repeat(Infinity)
       .start();
-  }
+  };
 
   // Function to stop the video stream
-  function stopVideoStream(video) {
+  const stopVideoStream = (video) => {
     if (video.srcObject) {
       const tracks = video.srcObject.getTracks();
       tracks.forEach(track => track.stop());
     }
-  }
+  };
 
   // Function to check if the marker is centered in the view
-  function isMarkerCentered(camera, marker) {
+  const isMarkerCentered = (camera, marker) => {
     const vector = new THREE.Vector3().copy(marker.position).project(camera);
     const dx = vector.x;
     const dy = vector.y;
     const threshold = 0.05; // Adjust as needed for sensitivity
     return Math.abs(dx) < threshold && Math.abs(dy) < threshold;
-  }
+  };
 
   // Function to load OpenCV.js
   const loadOpenCV = useCallback(() => {
@@ -910,14 +917,14 @@ const PanoramaViewer = () => {
 /** Helper Functions **/
 
 // Function to create the red marker
-function createMarker() {
+const createMarker = () => {
   const markerGeometry = new THREE.SphereGeometry(0.1, 16, 16);
   const markerMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000 });
   return new THREE.Mesh(markerGeometry, markerMaterial);
-}
+};
 
 // Function to create a captured image plane
-function createCapturedPlane(texture, width, height, elevation = 0) {
+const createCapturedPlane = (texture, width, height, elevation = 0) => {
   // Adjust plane height based on elevation to account for perspective distortion (optional)
   let adjustedHeight = height;
   if (Math.abs(elevation) > 60) { // Near the poles
@@ -927,10 +934,10 @@ function createCapturedPlane(texture, width, height, elevation = 0) {
   const geometry = new THREE.PlaneGeometry(width, adjustedHeight);
   const material = new THREE.MeshBasicMaterial({ map: texture, side: THREE.FrontSide });
   return new THREE.Mesh(geometry, material);
-}
+};
 
 // Function to add a middle pointer to a captured plane
-function addMiddlePointer(capturedPlane, azimuthDeg, elevationDeg) {
+const addMiddlePointer = (capturedPlane, azimuthDeg, elevationDeg) => {
   const pointerGeometry = new THREE.SphereGeometry(0.05, 16, 16);
   const pointerMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff00 }); // Green color for pointers
   const pointer = new THREE.Mesh(pointerGeometry, pointerMaterial);
@@ -944,10 +951,10 @@ function addMiddlePointer(capturedPlane, azimuthDeg, elevationDeg) {
 
   // Animate the pointer (pulsating effect)
   animatePointer(pointer);
-}
+};
 
 // Function to animate the pointer (pulsating effect)
-function animatePointer(pointer) {
+const animatePointer = (pointer) => {
   const scaleFactor = 1.2;
   const duration = 1000; // 1 second
 
@@ -957,9 +964,10 @@ function animatePointer(pointer) {
     .yoyo(true)
     .repeat(Infinity)
     .start();
-}
+};
 
 export default PanoramaViewer;
+
 
 
 
