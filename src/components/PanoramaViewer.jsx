@@ -26,8 +26,8 @@ const PanoramaViewer = () => {
   const offsetFromSurface = 0.01;
 
   // Global Configuration
-  const hfov = 60; // Horizontal Field of View in degrees
-  const vfov = 40; // Vertical Field of View in degrees
+  const hfov = 40; // Horizontal Field of View in degrees
+  const vfov = 60; // Vertical Field of View in degrees
 
   // Helper function to convert degrees to radians
   const degToRad = (degrees) => degrees * (Math.PI / 180);
