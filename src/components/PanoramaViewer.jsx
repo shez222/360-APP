@@ -58,7 +58,7 @@ const PanoramaViewer = () => {
     60: 60,   // +60°: 6 captures (60° increments)
     '-60': 60, // -60°: 6 captures (60° increments)
     90: 360,  // **Zenith: 1 capture (360° increments)**
-    // '-90': 90  // Nadir: 4 captures (90° increments)
+    '-90': 360  // Nadir: 4 captures (90° increments)
   }), []);
 
   // **Note**: With the updated increments, `maxCaptures` is now 38.
