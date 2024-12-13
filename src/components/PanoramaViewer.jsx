@@ -1,3 +1,5 @@
+
+
 // src/components/PanoramaViewer.jsx
 
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
@@ -20,12 +22,12 @@ const PanoramaViewer = () => {
   const hiddenCanvasRef = useRef(null);
 
   // Sphere and placement settings
-  const sphereRadius = 10; // Increased from 5 to 10 for smaller planes
+  const sphereRadius = 5;
   const offsetFromSurface = 0.01;
 
   // Global Configuration
-  const hfov = 30; // Reduced from 60° to 30°
-  const vfov = 30; // Reduced from 60° to 30°
+  const hfov = 30; // Horizontal Field of View in degrees
+  const vfov = 30; // Vertical Field of View in degrees
 
   // Helper function to convert degrees to radians
   const degToRad = (degrees) => degrees * (Math.PI / 180);
@@ -41,30 +43,23 @@ const PanoramaViewer = () => {
     return { width, height };
   };
 
-  // Define a scaling factor for the planes (if further reduction is needed)
-  const scaleFactor = 1; // Set to 1 since we're adjusting FOV and sphere radius
-
-  // Calculate plane dimensions with scaling
+  // Calculate plane dimensions
   const { width: planeWidth, height: planeHeight } = useMemo(() => {
-    const dimensions = calculatePlaneDimensions(sphereRadius, hfov, vfov);
-    return {
-      width: dimensions.width * scaleFactor,
-      height: dimensions.height * scaleFactor
-    };
-  }, [sphereRadius, hfov, vfov, scaleFactor]);
+    return calculatePlaneDimensions(sphereRadius, hfov, vfov);
+  }, [sphereRadius, hfov, vfov]);
 
   // Elevation levels for 40 images
   const elevationLevels = useMemo(() => [0, 30, -30, 60, -60, 90, -90], []);
 
   // Azimuthal increments based on elevation for 40 images
   const azimuthIncrements = useMemo(() => ({
-    0: 30,     // Equator: 12 images (30° increments)
-    30: 45,    // +30°: 8 images (45° increments)
-    '-30': 45,  // -30°: 8 images (45° increments)
-    60: 60,    // +60°: 6 images (60° increments)
-    '-60': 60,  // -60°: 6 images (60° increments)
-    90: 90,    // +90°: 4 images (90° increments)
-    '-90': 90   // -90°: 4 images (90° increments)
+    0: 36,    // Equator: 10 images (36° increments)
+    30: 60,   // +30°: 6 images (60° increments)
+    '-30': 60, // -30°: 6 images (60° increments)
+    60: 72,   // +60°: 5 images (72° increments)
+    '-60': 72, // -60°: 5 images (72° increments)
+    90: 90,   // +90°: 4 images (90° increments)
+    '-90': 90  // -90°: 4 images (90° increments)
   }), []);
 
   // Calculate maximum captures based on azimuthal increments (Total: 40 images)
@@ -95,15 +90,15 @@ const PanoramaViewer = () => {
           queue.push({ azimuth: i * increment, elevation: elev });
         }
       });
-      // Ensure the queue has exactly maxCaptures images
-      while (queue.length > maxCaptures) {
+      // Ensure the queue has exactly 40 images
+      while (queue.length > 40) {
         queue.pop();
       }
       captureQueueRef.current = queue;
       setQueueReady(true); // Indicate that the queue is ready
     };
     initializeQueue();
-  }, [elevationLevels, azimuthIncrements, maxCaptures]);
+  }, [elevationLevels, azimuthIncrements]);
 
   // Refs for mutable variables
   const captureCountRef = useRef(0);
@@ -201,7 +196,7 @@ const PanoramaViewer = () => {
     videoTextureRef.current = videoTexture;
 
     // Create the Video Plane and Add to Scene
-    const planeGeometry = new THREE.PlaneGeometry(planeWidth, planeHeight, 8, 8); // Optimized segments
+    const planeGeometry = new THREE.PlaneGeometry(planeWidth, planeHeight);
     const planeMaterial = new THREE.MeshBasicMaterial({ map: videoTexture, side: THREE.DoubleSide });
     const videoPlane = new THREE.Mesh(planeGeometry, planeMaterial);
     scene.add(videoPlane);
@@ -304,6 +299,7 @@ const PanoramaViewer = () => {
     const queue = captureQueueRef.current;
 
     if (!renderer || !scene || !videoPlane || !marker || !hiddenCanvas || !video) return;
+
     if (queue.length === 0) {
       setInstructions("All captures completed. Preview your panorama!");
       setIsPanoramaComplete(true);
@@ -448,8 +444,8 @@ const PanoramaViewer = () => {
         newQueue.push({ azimuth: i * increment, elevation: elev });
       }
     });
-    // Ensure the queue has exactly maxCaptures images
-    while (newQueue.length > maxCaptures) {
+    // Ensure the queue has exactly 40 images
+    while (newQueue.length > 40) {
       newQueue.pop();
     }
     captureQueueRef.current = newQueue;
@@ -461,7 +457,7 @@ const PanoramaViewer = () => {
       placeObjectOnSphere(videoPlane, firstCapture.azimuth, firstCapture.elevation);
       placeObjectOnSphere(marker, firstCapture.azimuth, firstCapture.elevation);
     }
-  }, [elevationLevels, azimuthIncrements, placeObjectOnSphere, maxCaptures]);
+  }, [elevationLevels, azimuthIncrements, placeObjectOnSphere]);
 
   // Function to preview the panorama
   const previewPanoramaHandler = useCallback(() => {
@@ -525,7 +521,7 @@ const PanoramaViewer = () => {
       adjustedHeight *= 1.2; // Increase height by 20%
     }
     
-    const geometry = new THREE.PlaneGeometry(width, adjustedHeight, 8, 8); // Optimized segments
+    const geometry = new THREE.PlaneGeometry(width, adjustedHeight);
     const material = new THREE.MeshBasicMaterial({ map: texture, side: THREE.FrontSide });
     return new THREE.Mesh(geometry, material);
   }
@@ -899,7 +895,7 @@ function createCapturedPlane(texture, width, height, elevation = 0) {
     adjustedHeight *= 1.2; // Increase height by 20%
   }
   
-  const geometry = new THREE.PlaneGeometry(width, adjustedHeight, 8, 8); // Optimized segments
+  const geometry = new THREE.PlaneGeometry(width, adjustedHeight);
   const material = new THREE.MeshBasicMaterial({ map: texture, side: THREE.FrontSide });
   return new THREE.Mesh(geometry, material);
 }
@@ -935,7 +931,6 @@ function animatePointer(pointer) {
 }
 
 export default PanoramaViewer;
-
 
 
 
