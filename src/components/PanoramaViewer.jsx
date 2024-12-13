@@ -1,4 +1,3 @@
-
 // src/components/PanoramaViewer.jsx
 
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
@@ -7,7 +6,6 @@ import { DeviceOrientationControls } from 'three-stdlib';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
 import { saveAs } from 'file-saver'; // For exporting panoramas
 import TWEEN from '@tweenjs/tween.js'; // For animations
-import './PanoramaViewer.css'; // Import a separate CSS file for styling
 
 const PanoramaViewer = () => {
   // Refs for Three.js components
@@ -22,13 +20,12 @@ const PanoramaViewer = () => {
   const hiddenCanvasRef = useRef(null);
 
   // Sphere and placement settings
-  const sphereRadius = 5;
+  const sphereRadius = 10; // Increased from 5 to 10 for smaller planes
   const offsetFromSurface = 0.01;
 
   // Global Configuration
-  const [hfov, setHfov] = useState(60); // Horizontal Field of View in degrees
-  const [vfov, setVfov] = useState(60); // Vertical Field of View in degrees
-  const [captureResolution, setCaptureResolution] = useState('1280x720'); // Default resolution
+  const hfov = 30; // Reduced from 60° to 30°
+  const vfov = 30; // Reduced from 60° to 30°
 
   // Helper function to convert degrees to radians
   const degToRad = (degrees) => degrees * (Math.PI / 180);
@@ -44,23 +41,30 @@ const PanoramaViewer = () => {
     return { width, height };
   };
 
-  // Calculate plane dimensions
+  // Define a scaling factor for the planes (if further reduction is needed)
+  const scaleFactor = 1; // Set to 1 since we're adjusting FOV and sphere radius
+
+  // Calculate plane dimensions with scaling
   const { width: planeWidth, height: planeHeight } = useMemo(() => {
-    return calculatePlaneDimensions(sphereRadius, hfov, vfov);
-  }, [sphereRadius, hfov, vfov]);
+    const dimensions = calculatePlaneDimensions(sphereRadius, hfov, vfov);
+    return {
+      width: dimensions.width * scaleFactor,
+      height: dimensions.height * scaleFactor
+    };
+  }, [sphereRadius, hfov, vfov, scaleFactor]);
 
   // Elevation levels for 40 images
   const elevationLevels = useMemo(() => [0, 30, -30, 60, -60, 90, -90], []);
 
   // Azimuthal increments based on elevation for 40 images
   const azimuthIncrements = useMemo(() => ({
-    0: 36,    // Equator: 10 images (36° increments)
-    30: 60,   // +30°: 6 images (60° increments)
-    '-30': 60, // -30°: 6 images (60° increments)
-    60: 72,   // +60°: 5 images (72° increments)
-    '-60': 72, // -60°: 5 images (72° increments)
-    90: 90,   // +90°: 4 images (90° increments)
-    '-90': 90  // -90°: 4 images (90° increments)
+    0: 30,     // Equator: 12 images (30° increments)
+    30: 45,    // +30°: 8 images (45° increments)
+    '-30': 45,  // -30°: 8 images (45° increments)
+    60: 60,    // +60°: 6 images (60° increments)
+    '-60': 60,  // -60°: 6 images (60° increments)
+    90: 90,    // +90°: 4 images (90° increments)
+    '-90': 90   // -90°: 4 images (90° increments)
   }), []);
 
   // Calculate maximum captures based on azimuthal increments (Total: 40 images)
@@ -91,15 +95,15 @@ const PanoramaViewer = () => {
           queue.push({ azimuth: i * increment, elevation: elev });
         }
       });
-      // Ensure the queue has exactly 40 images
-      while (queue.length > 40) {
+      // Ensure the queue has exactly maxCaptures images
+      while (queue.length > maxCaptures) {
         queue.pop();
       }
       captureQueueRef.current = queue;
       setQueueReady(true); // Indicate that the queue is ready
     };
     initializeQueue();
-  }, [elevationLevels, azimuthIncrements]);
+  }, [elevationLevels, azimuthIncrements, maxCaptures]);
 
   // Refs for mutable variables
   const captureCountRef = useRef(0);
@@ -112,10 +116,6 @@ const PanoramaViewer = () => {
   const [showFlash, setShowFlash] = useState(false); // For visual feedback
   const [isPanoramaComplete, setIsPanoramaComplete] = useState(false);
   const [previewPanorama, setPreviewPanorama] = useState(null);
-  const [capturedThumbnails, setCapturedThumbnails] = useState([]); // For image thumbnails
-  const [showHelpModal, setShowHelpModal] = useState(false); // For help modal
-  const [isStitching, setIsStitching] = useState(false); // For stitching process
-  const [stitchedPanorama, setStitchedPanorama] = useState(null); // Final stitched image
 
   // Initialize Three.js Scene and Components
   useEffect(() => {
@@ -168,7 +168,7 @@ const PanoramaViewer = () => {
     }
 
     // Add a Semi-Transparent Sphere as a Reference (Visible from Inside)
-    const sphereGeometry = new THREE.SphereGeometry(sphereRadius, 32, 32); // Reduced segments for performance
+    const sphereGeometry = new THREE.SphereGeometry(sphereRadius, 64, 64);
     const sphereMaterial = new THREE.MeshBasicMaterial({
       color: 0x44aa88,
       transparent: true,
@@ -201,7 +201,7 @@ const PanoramaViewer = () => {
     videoTextureRef.current = videoTexture;
 
     // Create the Video Plane and Add to Scene
-    const planeGeometry = new THREE.PlaneGeometry(planeWidth, planeHeight);
+    const planeGeometry = new THREE.PlaneGeometry(planeWidth, planeHeight, 8, 8); // Optimized segments
     const planeMaterial = new THREE.MeshBasicMaterial({ map: videoTexture, side: THREE.DoubleSide });
     const videoPlane = new THREE.Mesh(planeGeometry, planeMaterial);
     scene.add(videoPlane);
@@ -221,9 +221,8 @@ const PanoramaViewer = () => {
 
     // Create a Hidden Canvas for Capturing Video Frames
     const hiddenCanvas = document.createElement('canvas');
-    const [width, height] = captureResolution.split('x').map(Number);
-    hiddenCanvas.width = width; // Set based on selected resolution
-    hiddenCanvas.height = height;
+    hiddenCanvas.width = video.videoWidth || 1280; // Higher resolution for better quality
+    hiddenCanvas.height = video.videoHeight || 720;
     hiddenCanvasRef.current = hiddenCanvas;
 
     // Handle Window Resizing
@@ -241,7 +240,7 @@ const PanoramaViewer = () => {
       if (controls) controls.update();
       renderer.render(scene, camera);
 
-      // After the First Capture, Auto-Capture When Aligned with Throttling
+      // After the First Capture, Auto-Capture When Aligned
       if (
         firstCaptureDoneRef.current &&
         !capturingRef.current &&
@@ -249,7 +248,7 @@ const PanoramaViewer = () => {
         isMarkerCentered(camera, marker)
       ) {
         capturingRef.current = true;
-        throttleCapture(autoCaptureImage, 1000)().then(() => {
+        autoCaptureImage().then(() => {
           capturingRef.current = false;
         });
       }
@@ -270,7 +269,7 @@ const PanoramaViewer = () => {
       }
       stopVideoStream(video);
     };
-  }, [captureQueueRef, maxCaptures, elevationLevels, azimuthIncrements, planeWidth, planeHeight, captureResolution]);
+  }, [captureQueueRef, maxCaptures, elevationLevels, azimuthIncrements, planeWidth, planeHeight]);
 
   // Configure OrbitControls (Helper Function)
   const configureOrbitControls = useCallback((controls) => {
@@ -281,18 +280,6 @@ const PanoramaViewer = () => {
     controls.enablePan = false;
     controls.enableZoom = true;
   }, []);
-
-  // Throttle Function to Prevent Rapid Captures
-  const throttleCapture = (func, limit) => {
-    let inThrottle;
-    return function(...args) {
-      if (!inThrottle) {
-        func(...args);
-        inThrottle = true;
-        setTimeout(() => inThrottle = false, limit);
-      }
-    };
-  };
 
   // Capture Image Function
   const captureImage = useCallback(() => {
@@ -307,102 +294,6 @@ const PanoramaViewer = () => {
   }, []);
 
   // Perform Capture Function
-  // const performCapture = useCallback(async (isAuto) => {
-  //   const renderer = rendererRef.current;
-  //   const scene = sceneRef.current;
-  //   const videoPlane = videoPlaneRef.current;
-  //   const marker = markerRef.current;
-  //   const hiddenCanvas = hiddenCanvasRef.current;
-  //   const video = videoTextureRef.current?.image;
-  //   const queue = captureQueueRef.current;
-
-  //   if (!renderer || !scene || !videoPlane || !marker || !hiddenCanvas || !video) return;
-
-  //   if (queue.length === 0) {
-  //     setInstructions("All captures completed. Starting stitching process...");
-  //     setIsStitching(true);
-  //     await stitchImages(); // Start stitching after all captures
-  //     return;
-  //   }
-
-  //   const { azimuth, elevation } = queue.shift(); // Dequeue the next capture
-
-  //   // Draw the current video frame to the hidden canvas
-  //   const ctx = hiddenCanvas.getContext('2d');
-  //   ctx.drawImage(video, 0, 0, hiddenCanvas.width, hiddenCanvas.height);
-
-  //   // Get the Data URL from the Hidden Canvas
-  //   const dataURL = hiddenCanvas.toDataURL('image/png');
-
-  //   // Convert Data URL to Image Element
-  //   const imgElement = await dataURLToImageElement(dataURL);
-
-  //   // Create a texture from the captured image
-  //   const capturedTexture = new THREE.Texture(imgElement);
-  //   capturedTexture.needsUpdate = true;
-
-  //   // Create a plane for the captured image with FrontSide
-  //   const capturedPlane = createCapturedPlane(capturedTexture, planeWidth, planeHeight, elevation);
-  //   capturedPlane.userData.isCaptured = true; // Tag for potential removal/reset
-  //   scene.add(capturedPlane);
-
-  //   // Place the captured plane on the sphere at the current azimuth and elevation
-  //   placeObjectOnSphere(capturedPlane, azimuth, elevation);
-
-  //   // Store the captured plane reference
-  //   capturedPlanesRef.current.push(capturedPlane);
-
-  //   // Store thumbnail for UI
-  //   setCapturedThumbnails(prev => [...prev, dataURL]);
-
-  //   // If there is a previous captured plane, add a middle pointer to it
-  //   if (capturedPlanesRef.current.length > 1) {
-  //     const previousPlane = capturedPlanesRef.current[capturedPlanesRef.current.length - 2];
-  //     const nextCapture = queue[0]; // Peek at the next capture without dequeuing
-
-  //     if (nextCapture) {
-  //       addMiddlePointer(previousPlane, nextCapture.azimuth, nextCapture.elevation);
-  //     }
-  //   }
-
-  //   console.log(`Captured image placed at Azimuth: ${azimuth}°, Elevation: ${elevation}°`);
-
-  //   // Increment capture count
-  //   captureCountRef.current += 1;
-  //   setCaptureCount(captureCountRef.current); // Update state for UI
-
-  //   // Update Instructions
-  //   if (!isAuto) {
-  //     setInstructions("Image captured. Rotate the device to align the next marker for automatic capture.");
-  //     firstCaptureDoneRef.current = true;
-  //   } else {
-  //     setInstructions(`Image ${captureCountRef.current} captured. Rotate to align and auto-capture again.`);
-  //   }
-
-  //   // Move Video Plane and Marker to New Azimuth and Elevation
-  //   if (queue.length > 0) { // Only move if there are more captures
-  //     const nextCapture = queue[0];
-  //     placeObjectOnSphere(videoPlaneRef.current, nextCapture.azimuth, nextCapture.elevation);
-  //     placeObjectOnSphere(marker, nextCapture.azimuth, nextCapture.elevation);
-  //   }
-
-  //   // Flash Effect for Visual Feedback
-  //   setShowFlash(true);
-  //   setTimeout(() => setShowFlash(false), 200); // Flash duration: 200ms
-
-  //   // Optional: Haptic Feedback
-  //   if (navigator.vibrate) {
-  //     navigator.vibrate(100); // Vibrate for 100ms
-  //   }
-
-  //   // Check if all captures are done
-  //   if (captureCountRef.current >= maxCaptures) {
-  //     setInstructions("All captures completed. Starting stitching process...");
-  //     setIsStitching(true);
-  //     await stitchImages(); // Start stitching after all captures
-  //   }
-  // }, [planeHeight, planeWidth, maxCaptures]);
-
   const performCapture = useCallback((isAuto) => {
     const renderer = rendererRef.current;
     const scene = sceneRef.current;
@@ -413,63 +304,88 @@ const PanoramaViewer = () => {
     const queue = captureQueueRef.current;
 
     if (!renderer || !scene || !videoPlane || !marker || !hiddenCanvas || !video) return;
-
     if (queue.length === 0) {
-        setInstructions("All captures completed. Preview your panorama!");
-        setIsPanoramaComplete(true);
-        return;
+      setInstructions("All captures completed. Preview your panorama!");
+      setIsPanoramaComplete(true);
+      return;
     }
 
     const { azimuth, elevation } = queue.shift(); // Dequeue the next capture
 
-    // Set canvas resolution to match video feed
-    hiddenCanvas.width = video.videoWidth || 1280;
-    hiddenCanvas.height = video.videoHeight || 720;
-
+    // Draw the current video frame to the hidden canvas
     const ctx = hiddenCanvas.getContext('2d');
+    hiddenCanvas.width = video.videoWidth || 1280; // Ensure high resolution
+    hiddenCanvas.height = video.videoHeight || 720;
     ctx.drawImage(video, 0, 0, hiddenCanvas.width, hiddenCanvas.height);
 
+    // Get the Data URL from the Hidden Canvas
     const dataURL = hiddenCanvas.toDataURL('image/png');
 
     return new Promise((resolve) => {
-        const img = new Image();
-        img.onload = () => {
-            const capturedTexture = new THREE.Texture(img);
-            capturedTexture.needsUpdate = true;
+      const img = new Image();
+      img.onload = () => {
+        // Create a texture from the captured image
+        const capturedTexture = new THREE.Texture(img);
+        capturedTexture.needsUpdate = true;
 
-            const capturedPlane = createCapturedPlane(capturedTexture, planeWidth, planeHeight, elevation);
-            capturedPlane.userData.isCaptured = true;
-            scene.add(capturedPlane);
+        // Create a plane for the captured image with FrontSide
+        const capturedPlane = createCapturedPlane(capturedTexture, planeWidth, planeHeight, elevation);
+        capturedPlane.userData.isCaptured = true; // Tag for potential removal/reset
+        scene.add(capturedPlane);
 
-            placeObjectOnSphere(capturedPlane, azimuth, elevation);
-            capturedPlanesRef.current.push(capturedPlane);
+        // Place the captured plane on the sphere at the current azimuth and elevation
+        placeObjectOnSphere(capturedPlane, azimuth, elevation);
 
-            captureCountRef.current += 1;
-            setCaptureCount(captureCountRef.current);
+        // Store the captured plane reference
+        capturedPlanesRef.current.push(capturedPlane);
 
-            if (!isAuto) {
-                setInstructions("Image captured. Rotate to align the next marker.");
-                firstCaptureDoneRef.current = true;
-            }
+        // If there is a previous captured plane, add a middle pointer to it
+        if (capturedPlanesRef.current.length > 1) {
+          const previousPlane = capturedPlanesRef.current[capturedPlanesRef.current.length - 2];
+          const nextCapture = queue[0]; // Peek at the next capture without dequeuing
 
-            // Move marker and video plane to the next capture position
-            if (queue.length > 0) {
-                const nextCapture = queue[0];
-                placeObjectOnSphere(videoPlaneRef.current, nextCapture.azimuth, nextCapture.elevation);
-                placeObjectOnSphere(marker, nextCapture.azimuth, nextCapture.elevation);
-            }
+          if (nextCapture) {
+            addMiddlePointer(previousPlane, nextCapture.azimuth, nextCapture.elevation);
+          }
+        }
 
-            setShowFlash(true);
-            setTimeout(() => setShowFlash(false), 200);
+        console.log(`Captured image placed at Azimuth: ${azimuth}°, Elevation: ${elevation}°`);
 
-            resolve();
-        };
-        img.src = dataURL;
+        // Increment capture count
+        captureCountRef.current += 1;
+        setCaptureCount(captureCountRef.current); // Update state for UI
+
+        // Update Instructions
+        if (!isAuto) {
+          setInstructions("Image captured. Rotate the device to align the next marker for automatic capture.");
+          firstCaptureDoneRef.current = true;
+        } else {
+          setInstructions(`Image ${captureCountRef.current} captured. Rotate to align and auto-capture again.`);
+        }
+
+        // Move Video Plane and Marker to New Azimuth and Elevation
+        if (queue.length > 0) { // Only move if there are more captures
+          const nextCapture = queue[0];
+          placeObjectOnSphere(videoPlaneRef.current, nextCapture.azimuth, nextCapture.elevation);
+          placeObjectOnSphere(marker, nextCapture.azimuth, nextCapture.elevation);
+        }
+
+        // Flash Effect for Visual Feedback
+        setShowFlash(true);
+        setTimeout(() => setShowFlash(false), 200); // Flash duration: 200ms
+
+        // Check if all captures are done
+        if (captureCountRef.current >= maxCaptures) {
+          setInstructions("All captures completed. Preview your panorama!");
+          setIsPanoramaComplete(true);
+        }
+
+        resolve();
+      };
+      img.src = dataURL;
     });
-}, [planeHeight, planeWidth, maxCaptures]);
+  }, [planeHeight, planeWidth, maxCaptures]);
 
-
-  
   // Helper Function to Place Objects on the Sphere
   const placeObjectOnSphere = useCallback((obj, azimuthDeg, elevationDeg) => {
     const r = sphereRadius - offsetFromSurface;
@@ -521,9 +437,6 @@ const PanoramaViewer = () => {
     setInstructions("Press 'Capture' to take the first image.");
     setIsPanoramaComplete(false);
     setPreviewPanorama(null);
-    setCapturedThumbnails([]);
-    setIsStitching(false);
-    setStitchedPanorama(null);
     setQueueReady(false); // Temporarily set to false during reinitialization
 
     // Reset the capture queue
@@ -535,8 +448,8 @@ const PanoramaViewer = () => {
         newQueue.push({ azimuth: i * increment, elevation: elev });
       }
     });
-    // Ensure the queue has exactly 40 images
-    while (newQueue.length > 40) {
+    // Ensure the queue has exactly maxCaptures images
+    while (newQueue.length > maxCaptures) {
       newQueue.pop();
     }
     captureQueueRef.current = newQueue;
@@ -548,20 +461,47 @@ const PanoramaViewer = () => {
       placeObjectOnSphere(videoPlane, firstCapture.azimuth, firstCapture.elevation);
       placeObjectOnSphere(marker, firstCapture.azimuth, firstCapture.elevation);
     }
-  }, [elevationLevels, azimuthIncrements, placeObjectOnSphere]);
+  }, [elevationLevels, azimuthIncrements, placeObjectOnSphere, maxCaptures]);
 
   // Function to preview the panorama
   const previewPanoramaHandler = useCallback(() => {
-    setStitchedPanorama(null); // Ensure it's cleared
-    setPreviewPanorama(stitchedPanorama);
-  }, [stitchedPanorama]);
+    const renderer = rendererRef.current;
+    const scene = sceneRef.current;
+    const camera = cameraRef.current;
+
+    if (!renderer || !scene || !camera) return;
+
+    // Create a render target to capture the current scene
+    const renderTarget = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight);
+    renderer.setRenderTarget(renderTarget);
+    renderer.render(scene, camera);
+    renderer.setRenderTarget(null);
+
+    // Read pixels from the render target
+    const pixels = new Uint8Array(window.innerWidth * window.innerHeight * 4);
+    renderer.readRenderTargetPixels(renderTarget, 0, 0, window.innerWidth, window.innerHeight, pixels);
+
+    // Create a canvas to draw the pixels
+    const canvas = document.createElement('canvas');
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    const ctx = canvas.getContext('2d');
+
+    const imageData = ctx.createImageData(window.innerWidth, window.innerHeight);
+    imageData.data.set(pixels);
+    ctx.putImageData(imageData, 0, 0);
+
+    // Convert canvas to data URL and set as preview
+    const dataURL = canvas.toDataURL('image/png');
+    setPreviewPanorama(dataURL);
+  }, []);
 
   // Function to export the panorama
   const exportPanorama = useCallback(() => {
-    if (stitchedPanorama) {
-      saveAs(stitchedPanorama, 'panorama.png');
+    if (previewPanorama) {
+      saveAs(previewPanorama, 'panorama.png');
     }
-  }, [stitchedPanorama]);
+  }, [previewPanorama]);
 
   // Function to close the panorama preview
   const closePreview = useCallback(() => {
@@ -585,7 +525,7 @@ const PanoramaViewer = () => {
       adjustedHeight *= 1.2; // Increase height by 20%
     }
     
-    const geometry = new THREE.PlaneGeometry(width, adjustedHeight);
+    const geometry = new THREE.PlaneGeometry(width, adjustedHeight, 8, 8); // Optimized segments
     const material = new THREE.MeshBasicMaterial({ map: texture, side: THREE.FrontSide });
     return new THREE.Mesh(geometry, material);
   }
@@ -637,93 +577,7 @@ const PanoramaViewer = () => {
     return Math.abs(dx) < threshold && Math.abs(dy) < threshold;
   }
 
-  // Function to load OpenCV.js
-  const loadOpenCV = useCallback(() => {
-    return new Promise((resolve, reject) => {
-      if (window.cv && window.cv.ready) {
-        resolve(window.cv);
-      } else {
-        const checkReady = setInterval(() => {
-          if (window.cv && window.cv.ready) {
-            clearInterval(checkReady);
-            resolve(window.cv);
-          }
-        }, 100);
-        // Timeout after 10 seconds
-        setTimeout(() => {
-          clearInterval(checkReady);
-          reject(new Error('OpenCV.js failed to load.'));
-        }, 10000);
-      }
-    });
-  }, []);
-
-  // Helper function to convert Data URL to Image Element
-  const dataURLToImageElement = (dataURL) => {
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      img.crossOrigin = 'Anonymous';
-      img.onload = () => resolve(img);
-      img.onerror = reject;
-      img.src = dataURL;
-    });
-  };
-
-  // Function to stitch images using OpenCV.js
-  const stitchImages = useCallback(async () => {
-    try {
-      // Load OpenCV.js
-      const cv = await loadOpenCV();
-      console.log('OpenCV.js loaded.');
-
-      // Collect captured images
-      const imageElements = await Promise.all(
-        capturedThumbnails.map(dataURL => dataURLToImageElement(dataURL))
-      );
-
-      const images = imageElements.map(img => {
-        const src = cv.imread(img);
-        return src;
-      });
-
-      // Create a stitcher instance
-      const stitcher = cv.Stitcher.create(cv.Stitcher_PANORAMA);
-      
-      // Perform stitching
-      const pano = new cv.Mat();
-      const status = new cv.Mat();
-      const result = stitcher.stitch(images, pano, status);
-
-      if (result !== cv.Stitcher_OK) {
-        console.error('Stitching failed with status:', result);
-        setInstructions("Stitching failed. Please try capturing again.");
-        setIsStitching(false);
-        return;
-      }
-
-      // Convert the stitched panorama to a Data URL
-      cv.imshow('canvas-output', pano);
-      const canvas = document.getElementById('canvas-output');
-      const stitchedDataURL = canvas.toDataURL('image/png');
-      setStitchedPanorama(stitchedDataURL);
-      setIsStitching(false);
-      setIsPanoramaComplete(true);
-      setInstructions("Stitching completed. You can preview your panorama.");
-
-      // Cleanup
-      images.forEach(img => img.delete());
-      stitcher.delete();
-      pano.delete();
-      status.delete();
-      cv.destroyAllWindows();
-    } catch (error) {
-      console.error('Error during stitching:', error);
-      setInstructions("An error occurred during stitching. Please try again.");
-      setIsStitching(false);
-    }
-  }, [capturedThumbnails, loadOpenCV]);
-
-  // Styles for Directional Arrows and other UI elements
+  // Styles for Directional Arrows
   const arrowButtonStyle = {
     padding: '10px',
     background: 'rgba(255,255,255,0.3)',
@@ -736,22 +590,48 @@ const PanoramaViewer = () => {
   };
 
   return (
-    <div className="panorama-viewer-container">
+    <div style={{ position: 'relative', width: '100%', height: '100vh', overflow: 'hidden', backgroundColor: '#000' }}>
       {/* Three.js Mount Point */}
       <div
         ref={mountRef}
-        className="threejs-mount"
-        aria-label="Panorama Viewer"
+        style={{
+          width: '100%',
+          height: '100%',
+          display: 'block',
+          position: 'absolute',
+          top: 0,
+          left: 0
+        }}
       />
       
       {/* Center Reticle */}
       <div 
-        className="center-reticle"
-        aria-hidden="true"
+        style={{
+          position: 'absolute', 
+          top: '50%', 
+          left: '50%', 
+          transform: 'translate(-50%, -50%)',
+          zIndex: 2, 
+          width: '30px', 
+          height: '30px', 
+          border: '3px solid white', 
+          borderRadius: '50%',
+          background: 'rgba(255,255,255,0.1)'
+        }}
       />
       
       {/* Directional Arrows */}
-      <div className="directional-arrows">
+      <div
+        style={{
+          position: 'absolute',
+          bottom: '20px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          zIndex: 2,
+          display: 'flex',
+          gap: '10px'
+        }}
+      >
         <button
           onClick={() => {
             // Rotate clockwise
@@ -759,7 +639,6 @@ const PanoramaViewer = () => {
           }}
           style={arrowButtonStyle}
           aria-label="Rotate Clockwise"
-          title="Rotate Clockwise"
         >
           &#8594;
         </button>
@@ -770,7 +649,6 @@ const PanoramaViewer = () => {
           }}
           style={arrowButtonStyle}
           aria-label="Rotate Counter-Clockwise"
-          title="Rotate Counter-Clockwise"
         >
           &#8592;
         </button>
@@ -778,60 +656,88 @@ const PanoramaViewer = () => {
       
       {/* Instructions and Capture Button */}
       <div 
-        className="instructions-panel"
-        role="region"
-        aria-labelledby="instructions-heading"
+        style={{ 
+          position: 'absolute', 
+          top: '10px', 
+          left: '10px', 
+          zIndex: 1, 
+          color: 'white', 
+          background: 'rgba(0,0,0,0.7)', 
+          padding: '20px',
+          borderRadius: '8px',
+          maxWidth: '350px',
+          fontFamily: 'Arial, sans-serif',
+          boxShadow: '0 0 15px rgba(0,0,0,0.5)'
+        }}
       >
         {/* Capture Button */}
         {queueReady && captureCount < maxCaptures && captureQueueRef.current.length > 0 && !firstCaptureDoneRef.current && (
           <button
             onClick={captureImage}
-            className="capture-button"
-            aria-label="Capture Image"
-            title="Capture Image"
+            style={{
+              padding: '12px 25px',
+              background: '#ffffffee',
+              border: 'none',
+              cursor: 'pointer',
+              marginBottom: '15px',
+              borderRadius: '5px',
+              fontWeight: 'bold',
+              fontSize: '16px',
+              transition: 'background 0.3s',
+            }}
+            onMouseOver={(e) => e.target.style.background = '#ffffff'}
+            onMouseOut={(e) => e.target.style.background = '#ffffffee'}
           >
             Capture
           </button>
         )}
         
         {/* Instructions */}
-        <div className="instructions-text" id="instructions-heading">{instructions}</div>
+        <div style={{ marginBottom: '10px', fontSize: '16px' }}>{instructions}</div>
         
         {/* Capture Status */}
-        <div className="capture-status">
+        <div style={{ marginTop: '10px', fontSize: '14px' }}>
           <strong>Captures:</strong> {captureCount} / {maxCaptures}
         </div>
         
         {/* Progress Bar */}
-        <div className="progress-bar-container">
-          <progress value={captureCount} max={maxCaptures} className="progress-bar"></progress>
-          <span className="progress-text">{` ${captureCount} / ${maxCaptures}`}</span>
-        </div>
-
-        {/* Capture Resolution Selector */}
-        <div className="resolution-selector">
-          <label htmlFor="resolution" className="resolution-label">Capture Resolution:</label>
-          <select
-            id="resolution"
-            value={captureResolution}
-            onChange={(e) => setCaptureResolution(e.target.value)}
-            aria-label="Select Capture Resolution"
-          >
-            <option value="640x360">640x360</option>
-            <option value="1280x720">1280x720</option>
-            <option value="1920x1080">1920x1080</option>
-          </select>
+        <div style={{ marginTop: '10px' }}>
+          <progress value={captureCount} max={maxCaptures} style={{ width: '100%', height: '10px' }}></progress>
+          <span style={{ color: '#fff' }}>{` ${captureCount} / ${maxCaptures}`}</span>
         </div>
       </div>
       
       {/* Reset Button */}
       {captureCount > 0 && !isPanoramaComplete && (
-        <div className="reset-button-container">
+        <div
+          style={{
+            position: 'absolute',
+            top: '10px',
+            right: '10px',
+            zIndex: 1, 
+            color: 'white', 
+            background: 'rgba(0,0,0,0.7)', 
+            padding: '10px',
+            borderRadius: '5px',
+            maxWidth: '150px',
+            fontFamily: 'Arial, sans-serif',
+            boxShadow: '0 0 15px rgba(0,0,0,0.5)'
+          }}
+        >
           <button
             onClick={resetPanorama}
-            className="reset-button"
-            aria-label="Reset Panorama Capture"
-            title="Reset Panorama Capture"
+            style={{
+              padding: '10px 20px',
+              background: '#ffffffee',
+              border: 'none',
+              cursor: 'pointer',
+              borderRadius: '5px',
+              fontWeight: 'bold',
+              fontSize: '14px',
+              transition: 'background 0.3s',
+            }}
+            onMouseOver={(e) => e.target.style.background = '#ffffff'}
+            onMouseOut={(e) => e.target.style.background = '#ffffffee'}
           >
             Reset
           </button>
@@ -841,35 +747,54 @@ const PanoramaViewer = () => {
       {/* Flash Effect for Visual Feedback */}
       {showFlash && (
         <div
-          className="flash-effect"
-          aria-hidden="true"
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            width: '100%',
+            height: '100%',
+            backgroundColor: 'rgba(255,255,255,0.8)',
+            zIndex: 3,
+            pointerEvents: 'none',
+            transition: 'opacity 0.2s',
+          }}
         />
       )}
       
-      {/* Stitching Progress Overlay */}
-      {isStitching && (
-        <div className="stitching-overlay" role="alert" aria-live="assertive">
-          <div className="stitching-content">
-            <h2>Stitching Images...</h2>
-            <p>Please wait while your panorama is being created.</p>
-            <div className="spinner"></div>
-          </div>
-        </div>
-      )}
-      
       {/* Panorama Completion Overlay */}
-      {isPanoramaComplete && !stitchedPanorama && (
+      {isPanoramaComplete && !previewPanorama && (
         <div
-          className="completion-overlay"
-          role="dialog"
-          aria-labelledby="completion-heading"
+          style={{
+            position: 'absolute',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+            zIndex: 4,
+            color: 'white',
+            background: 'rgba(0,0,0,0.8)',
+            padding: '25px',
+            borderRadius: '10px',
+            textAlign: 'center',
+            fontFamily: 'Arial, sans-serif',
+            boxShadow: '0 0 20px rgba(0,0,0,0.7)'
+          }}
         >
-          <h2 id="completion-heading">Panorama Completed!</h2>
+          <h2>Panorama Completed!</h2>
           <button
             onClick={previewPanoramaHandler}
-            className="preview-button"
-            aria-label="Preview Panorama"
-            title="Preview Panorama"
+            style={{
+              padding: '12px 25px',
+              background: '#ffffffee',
+              border: 'none',
+              cursor: 'pointer',
+              marginTop: '20px',
+              borderRadius: '5px',
+              fontWeight: 'bold',
+              fontSize: '16px',
+              transition: 'background 0.3s',
+            }}
+            onMouseOver={(e) => e.target.style.background = '#ffffff'}
+            onMouseOut={(e) => e.target.style.background = '#ffffffee'}
           >
             Preview Panorama
           </button>
@@ -877,99 +802,82 @@ const PanoramaViewer = () => {
       )}
       
       {/* Panorama Preview Modal */}
-      {stitchedPanorama && (
+      {previewPanorama && (
         <div
-          className="preview-modal"
-          role="dialog"
-          aria-labelledby="preview-heading"
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            width: '100%',
+            height: '100%',
+            backgroundColor: 'rgba(0,0,0,0.9)',
+            zIndex: 5,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center'
+          }}
         >
-          <div className="preview-content">
+          <div
+            style={{
+              position: 'relative',
+              width: '80%',
+              height: '80%',
+              backgroundColor: '#000',
+              borderRadius: '10px',
+              overflow: 'hidden',
+              boxShadow: '0 0 30px rgba(0,0,0,0.8)'
+            }}
+          >
             <img 
-              src={stitchedPanorama} 
+              src={previewPanorama} 
               alt="Panorama Preview" 
-              className="preview-image"
+              style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
             />
             <button
               onClick={exportPanorama}
-              className="export-button"
-              aria-label="Export Panorama"
-              title="Export Panorama"
+              style={{
+                position: 'absolute',
+                bottom: '20px',
+                left: '50%',
+                transform: 'translateX(-50%)',
+                padding: '10px 20px',
+                background: '#ffffffee',
+                border: 'none',
+                cursor: 'pointer',
+                borderRadius: '5px',
+                fontWeight: 'bold',
+                fontSize: '14px',
+                transition: 'background 0.3s',
+              }}
+              onMouseOver={(e) => e.target.style.background = '#ffffff'}
+              onMouseOut={(e) => e.target.style.background = '#ffffffee'}
             >
               Export Panorama
             </button>
             <button
               onClick={closePreview}
-              className="close-preview-button"
-              aria-label="Close Preview"
-              title="Close Preview"
+              style={{
+                position: 'absolute',
+                top: '20px',
+                right: '20px',
+                padding: '8px 16px',
+                background: '#ff4d4dee',
+                border: 'none',
+                cursor: 'pointer',
+                borderRadius: '5px',
+                fontWeight: 'bold',
+                fontSize: '14px',
+                color: '#fff',
+                transition: 'background 0.3s',
+              }}
+              onMouseOver={(e) => e.target.style.background = '#ff4d4d'}
+              onMouseOut={(e) => e.target.style.background = '#ff4d4dee'}
             >
               Close
             </button>
           </div>
         </div>
       )}
-
-      {/* Captured Thumbnails Sidebar */}
-      {capturedThumbnails.length > 0 && (
-        <div className="thumbnails-sidebar" role="region" aria-labelledby="thumbnails-heading">
-          <h3 id="thumbnails-heading">Captured Images</h3>
-          <div className="thumbnails-container">
-            {capturedThumbnails.map((thumb, index) => (
-              <img 
-                key={index} 
-                src={thumb} 
-                alt={`Captured ${index + 1}`} 
-                className="thumbnail-image" 
-                title={`Captured Image ${index + 1}`}
-              />
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Help Modal */}
-      <div className="help-button-container">
-        <button
-          onClick={() => setShowHelpModal(true)}
-          className="help-button"
-          aria-label="Open Help"
-          title="Open Help"
-        >
-          ?
-        </button>
-      </div>
-
-      {showHelpModal && (
-        <div
-          className="help-modal"
-          role="dialog"
-          aria-labelledby="help-heading"
-          aria-describedby="help-description"
-        >
-          <div className="help-content">
-            <h2 id="help-heading">How to Use Panorama Viewer</h2>
-            <p id="help-description">
-              1. Press the "Capture" button to take the first image.<br />
-              2. Rotate your device or use the on-screen arrows to align the red marker with the center reticle.<br />
-              3. The app will automatically capture images as you align the marker.<br />
-              4. Once all captures are completed, the app will stitch the images into a panorama.<br />
-              5. Preview your panorama and export it as an image.<br />
-              6. You can reset the capture process at any time by pressing the "Reset" button.
-            </p>
-            <button
-              onClick={() => setShowHelpModal(false)}
-              className="close-help-button"
-              aria-label="Close Help"
-              title="Close Help"
-            >
-              Close
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Hidden Canvas for OpenCV.js Output */}
-      <canvas id="canvas-output" style={{ display: 'none' }}></canvas>
     </div>
   );
 };
@@ -991,7 +899,7 @@ function createCapturedPlane(texture, width, height, elevation = 0) {
     adjustedHeight *= 1.2; // Increase height by 20%
   }
   
-  const geometry = new THREE.PlaneGeometry(width, adjustedHeight);
+  const geometry = new THREE.PlaneGeometry(width, adjustedHeight, 8, 8); // Optimized segments
   const material = new THREE.MeshBasicMaterial({ map: texture, side: THREE.FrontSide });
   return new THREE.Mesh(geometry, material);
 }
@@ -1042,6 +950,10 @@ export default PanoramaViewer;
 
 
 
+
+
+
+
 // // src/components/PanoramaViewer.jsx
 
 // import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
@@ -1050,6 +962,7 @@ export default PanoramaViewer;
 // import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
 // import { saveAs } from 'file-saver'; // For exporting panoramas
 // import TWEEN from '@tweenjs/tween.js'; // For animations
+// import './PanoramaViewer.css'; // Import a separate CSS file for styling
 
 // const PanoramaViewer = () => {
 //   // Refs for Three.js components
@@ -1068,8 +981,9 @@ export default PanoramaViewer;
 //   const offsetFromSurface = 0.01;
 
 //   // Global Configuration
-//   const hfov = 60; // Horizontal Field of View in degrees
-//   const vfov = 60; // Vertical Field of View in degrees
+//   const [hfov, setHfov] = useState(60); // Horizontal Field of View in degrees
+//   const [vfov, setVfov] = useState(60); // Vertical Field of View in degrees
+//   const [captureResolution, setCaptureResolution] = useState('1280x720'); // Default resolution
 
 //   // Helper function to convert degrees to radians
 //   const degToRad = (degrees) => degrees * (Math.PI / 180);
@@ -1153,6 +1067,10 @@ export default PanoramaViewer;
 //   const [showFlash, setShowFlash] = useState(false); // For visual feedback
 //   const [isPanoramaComplete, setIsPanoramaComplete] = useState(false);
 //   const [previewPanorama, setPreviewPanorama] = useState(null);
+//   const [capturedThumbnails, setCapturedThumbnails] = useState([]); // For image thumbnails
+//   const [showHelpModal, setShowHelpModal] = useState(false); // For help modal
+//   const [isStitching, setIsStitching] = useState(false); // For stitching process
+//   const [stitchedPanorama, setStitchedPanorama] = useState(null); // Final stitched image
 
 //   // Initialize Three.js Scene and Components
 //   useEffect(() => {
@@ -1205,7 +1123,7 @@ export default PanoramaViewer;
 //     }
 
 //     // Add a Semi-Transparent Sphere as a Reference (Visible from Inside)
-//     const sphereGeometry = new THREE.SphereGeometry(sphereRadius, 64, 64);
+//     const sphereGeometry = new THREE.SphereGeometry(sphereRadius, 32, 32); // Reduced segments for performance
 //     const sphereMaterial = new THREE.MeshBasicMaterial({
 //       color: 0x44aa88,
 //       transparent: true,
@@ -1258,8 +1176,9 @@ export default PanoramaViewer;
 
 //     // Create a Hidden Canvas for Capturing Video Frames
 //     const hiddenCanvas = document.createElement('canvas');
-//     hiddenCanvas.width = video.videoWidth || 1280; // Higher resolution for better quality
-//     hiddenCanvas.height = video.videoHeight || 720;
+//     const [width, height] = captureResolution.split('x').map(Number);
+//     hiddenCanvas.width = width; // Set based on selected resolution
+//     hiddenCanvas.height = height;
 //     hiddenCanvasRef.current = hiddenCanvas;
 
 //     // Handle Window Resizing
@@ -1277,7 +1196,7 @@ export default PanoramaViewer;
 //       if (controls) controls.update();
 //       renderer.render(scene, camera);
 
-//       // After the First Capture, Auto-Capture When Aligned
+//       // After the First Capture, Auto-Capture When Aligned with Throttling
 //       if (
 //         firstCaptureDoneRef.current &&
 //         !capturingRef.current &&
@@ -1285,7 +1204,7 @@ export default PanoramaViewer;
 //         isMarkerCentered(camera, marker)
 //       ) {
 //         capturingRef.current = true;
-//         autoCaptureImage().then(() => {
+//         throttleCapture(autoCaptureImage, 1000)().then(() => {
 //           capturingRef.current = false;
 //         });
 //       }
@@ -1306,7 +1225,7 @@ export default PanoramaViewer;
 //       }
 //       stopVideoStream(video);
 //     };
-//   }, [captureQueueRef, maxCaptures, elevationLevels, azimuthIncrements, planeWidth, planeHeight]);
+//   }, [captureQueueRef, maxCaptures, elevationLevels, azimuthIncrements, planeWidth, planeHeight, captureResolution]);
 
 //   // Configure OrbitControls (Helper Function)
 //   const configureOrbitControls = useCallback((controls) => {
@@ -1317,6 +1236,18 @@ export default PanoramaViewer;
 //     controls.enablePan = false;
 //     controls.enableZoom = true;
 //   }, []);
+
+//   // Throttle Function to Prevent Rapid Captures
+//   const throttleCapture = (func, limit) => {
+//     let inThrottle;
+//     return function(...args) {
+//       if (!inThrottle) {
+//         func(...args);
+//         inThrottle = true;
+//         setTimeout(() => inThrottle = false, limit);
+//       }
+//     };
+//   };
 
 //   // Capture Image Function
 //   const captureImage = useCallback(() => {
@@ -1331,7 +1262,7 @@ export default PanoramaViewer;
 //   }, []);
 
 //   // Perform Capture Function
-//   const performCapture = useCallback((isAuto) => {
+//   const performCapture = useCallback(async (isAuto) => {
 //     const renderer = rendererRef.current;
 //     const scene = sceneRef.current;
 //     const videoPlane = videoPlaneRef.current;
@@ -1343,8 +1274,9 @@ export default PanoramaViewer;
 //     if (!renderer || !scene || !videoPlane || !marker || !hiddenCanvas || !video) return;
 
 //     if (queue.length === 0) {
-//       setInstructions("All captures completed. Preview your panorama!");
-//       setIsPanoramaComplete(true);
+//       setInstructions("All captures completed. Starting stitching process...");
+//       setIsStitching(true);
+//       await stitchImages(); // Start stitching after all captures
 //       return;
 //     }
 
@@ -1352,76 +1284,78 @@ export default PanoramaViewer;
 
 //     // Draw the current video frame to the hidden canvas
 //     const ctx = hiddenCanvas.getContext('2d');
-//     hiddenCanvas.width = video.videoWidth || 1280; // Ensure high resolution
-//     hiddenCanvas.height = video.videoHeight || 720;
 //     ctx.drawImage(video, 0, 0, hiddenCanvas.width, hiddenCanvas.height);
 
 //     // Get the Data URL from the Hidden Canvas
 //     const dataURL = hiddenCanvas.toDataURL('image/png');
 
-//     return new Promise((resolve) => {
-//       const img = new Image();
-//       img.onload = () => {
-//         // Create a texture from the captured image
-//         const capturedTexture = new THREE.Texture(img);
-//         capturedTexture.needsUpdate = true;
+//     // Convert Data URL to Image Element
+//     const imgElement = await dataURLToImageElement(dataURL);
 
-//         // Create a plane for the captured image with FrontSide
-//         const capturedPlane = createCapturedPlane(capturedTexture, planeWidth, planeHeight, elevation);
-//         capturedPlane.userData.isCaptured = true; // Tag for potential removal/reset
-//         scene.add(capturedPlane);
+//     // Create a texture from the captured image
+//     const capturedTexture = new THREE.Texture(imgElement);
+//     capturedTexture.needsUpdate = true;
 
-//         // Place the captured plane on the sphere at the current azimuth and elevation
-//         placeObjectOnSphere(capturedPlane, azimuth, elevation);
+//     // Create a plane for the captured image with FrontSide
+//     const capturedPlane = createCapturedPlane(capturedTexture, planeWidth, planeHeight, elevation);
+//     capturedPlane.userData.isCaptured = true; // Tag for potential removal/reset
+//     scene.add(capturedPlane);
 
-//         // Store the captured plane reference
-//         capturedPlanesRef.current.push(capturedPlane);
+//     // Place the captured plane on the sphere at the current azimuth and elevation
+//     placeObjectOnSphere(capturedPlane, azimuth, elevation);
 
-//         // If there is a previous captured plane, add a middle pointer to it
-//         if (capturedPlanesRef.current.length > 1) {
-//           const previousPlane = capturedPlanesRef.current[capturedPlanesRef.current.length - 2];
-//           const nextCapture = queue[0]; // Peek at the next capture without dequeuing
+//     // Store the captured plane reference
+//     capturedPlanesRef.current.push(capturedPlane);
 
-//           if (nextCapture) {
-//             addMiddlePointer(previousPlane, nextCapture.azimuth, nextCapture.elevation);
-//           }
-//         }
+//     // Store thumbnail for UI
+//     setCapturedThumbnails(prev => [...prev, dataURL]);
 
-//         console.log(`Captured image placed at Azimuth: ${azimuth}°, Elevation: ${elevation}°`);
+//     // If there is a previous captured plane, add a middle pointer to it
+//     if (capturedPlanesRef.current.length > 1) {
+//       const previousPlane = capturedPlanesRef.current[capturedPlanesRef.current.length - 2];
+//       const nextCapture = queue[0]; // Peek at the next capture without dequeuing
 
-//         // Increment capture count
-//         captureCountRef.current += 1;
-//         setCaptureCount(captureCountRef.current); // Update state for UI
+//       if (nextCapture) {
+//         addMiddlePointer(previousPlane, nextCapture.azimuth, nextCapture.elevation);
+//       }
+//     }
 
-//         // Update Instructions
-//         if (!isAuto) {
-//           setInstructions("Image captured. Rotate the device to align the next marker for automatic capture.");
-//           firstCaptureDoneRef.current = true;
-//         } else {
-//           setInstructions(`Image ${captureCountRef.current} captured. Rotate to align and auto-capture again.`);
-//         }
+//     console.log(`Captured image placed at Azimuth: ${azimuth}°, Elevation: ${elevation}°`);
 
-//         // Move Video Plane and Marker to New Azimuth and Elevation
-//         if (queue.length > 0) { // Only move if there are more captures
-//           const nextCapture = queue[0];
-//           placeObjectOnSphere(videoPlaneRef.current, nextCapture.azimuth, nextCapture.elevation);
-//           placeObjectOnSphere(marker, nextCapture.azimuth, nextCapture.elevation);
-//         }
+//     // Increment capture count
+//     captureCountRef.current += 1;
+//     setCaptureCount(captureCountRef.current); // Update state for UI
 
-//         // Flash Effect for Visual Feedback
-//         setShowFlash(true);
-//         setTimeout(() => setShowFlash(false), 200); // Flash duration: 200ms
+//     // Update Instructions
+//     if (!isAuto) {
+//       setInstructions("Image captured. Rotate the device to align the next marker for automatic capture.");
+//       firstCaptureDoneRef.current = true;
+//     } else {
+//       setInstructions(`Image ${captureCountRef.current} captured. Rotate to align and auto-capture again.`);
+//     }
 
-//         // Check if all captures are done
-//         if (captureCountRef.current >= maxCaptures) {
-//           setInstructions("All captures completed. Preview your panorama!");
-//           setIsPanoramaComplete(true);
-//         }
+//     // Move Video Plane and Marker to New Azimuth and Elevation
+//     if (queue.length > 0) { // Only move if there are more captures
+//       const nextCapture = queue[0];
+//       placeObjectOnSphere(videoPlaneRef.current, nextCapture.azimuth, nextCapture.elevation);
+//       placeObjectOnSphere(marker, nextCapture.azimuth, nextCapture.elevation);
+//     }
 
-//         resolve();
-//       };
-//       img.src = dataURL;
-//     });
+//     // Flash Effect for Visual Feedback
+//     setShowFlash(true);
+//     setTimeout(() => setShowFlash(false), 200); // Flash duration: 200ms
+
+//     // Optional: Haptic Feedback
+//     if (navigator.vibrate) {
+//       navigator.vibrate(100); // Vibrate for 100ms
+//     }
+
+//     // Check if all captures are done
+//     if (captureCountRef.current >= maxCaptures) {
+//       setInstructions("All captures completed. Starting stitching process...");
+//       setIsStitching(true);
+//       await stitchImages(); // Start stitching after all captures
+//     }
 //   }, [planeHeight, planeWidth, maxCaptures]);
 
 //   // Helper Function to Place Objects on the Sphere
@@ -1475,6 +1409,9 @@ export default PanoramaViewer;
 //     setInstructions("Press 'Capture' to take the first image.");
 //     setIsPanoramaComplete(false);
 //     setPreviewPanorama(null);
+//     setCapturedThumbnails([]);
+//     setIsStitching(false);
+//     setStitchedPanorama(null);
 //     setQueueReady(false); // Temporarily set to false during reinitialization
 
 //     // Reset the capture queue
@@ -1503,43 +1440,16 @@ export default PanoramaViewer;
 
 //   // Function to preview the panorama
 //   const previewPanoramaHandler = useCallback(() => {
-//     const renderer = rendererRef.current;
-//     const scene = sceneRef.current;
-//     const camera = cameraRef.current;
-
-//     if (!renderer || !scene || !camera) return;
-
-//     // Create a render target to capture the current scene
-//     const renderTarget = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight);
-//     renderer.setRenderTarget(renderTarget);
-//     renderer.render(scene, camera);
-//     renderer.setRenderTarget(null);
-
-//     // Read pixels from the render target
-//     const pixels = new Uint8Array(window.innerWidth * window.innerHeight * 4);
-//     renderer.readRenderTargetPixels(renderTarget, 0, 0, window.innerWidth, window.innerHeight, pixels);
-
-//     // Create a canvas to draw the pixels
-//     const canvas = document.createElement('canvas');
-//     canvas.width = window.innerWidth;
-//     canvas.height = window.innerHeight;
-//     const ctx = canvas.getContext('2d');
-
-//     const imageData = ctx.createImageData(window.innerWidth, window.innerHeight);
-//     imageData.data.set(pixels);
-//     ctx.putImageData(imageData, 0, 0);
-
-//     // Convert canvas to data URL and set as preview
-//     const dataURL = canvas.toDataURL('image/png');
-//     setPreviewPanorama(dataURL);
-//   }, []);
+//     setStitchedPanorama(null); // Ensure it's cleared
+//     setPreviewPanorama(stitchedPanorama);
+//   }, [stitchedPanorama]);
 
 //   // Function to export the panorama
 //   const exportPanorama = useCallback(() => {
-//     if (previewPanorama) {
-//       saveAs(previewPanorama, 'panorama.png');
+//     if (stitchedPanorama) {
+//       saveAs(stitchedPanorama, 'panorama.png');
 //     }
-//   }, [previewPanorama]);
+//   }, [stitchedPanorama]);
 
 //   // Function to close the panorama preview
 //   const closePreview = useCallback(() => {
@@ -1615,7 +1525,93 @@ export default PanoramaViewer;
 //     return Math.abs(dx) < threshold && Math.abs(dy) < threshold;
 //   }
 
-//   // Styles for Directional Arrows
+//   // Function to load OpenCV.js
+//   const loadOpenCV = useCallback(() => {
+//     return new Promise((resolve, reject) => {
+//       if (window.cv && window.cv.ready) {
+//         resolve(window.cv);
+//       } else {
+//         const checkReady = setInterval(() => {
+//           if (window.cv && window.cv.ready) {
+//             clearInterval(checkReady);
+//             resolve(window.cv);
+//           }
+//         }, 100);
+//         // Timeout after 10 seconds
+//         setTimeout(() => {
+//           clearInterval(checkReady);
+//           reject(new Error('OpenCV.js failed to load.'));
+//         }, 10000);
+//       }
+//     });
+//   }, []);
+
+//   // Helper function to convert Data URL to Image Element
+//   const dataURLToImageElement = (dataURL) => {
+//     return new Promise((resolve, reject) => {
+//       const img = new Image();
+//       img.crossOrigin = 'Anonymous';
+//       img.onload = () => resolve(img);
+//       img.onerror = reject;
+//       img.src = dataURL;
+//     });
+//   };
+
+//   // Function to stitch images using OpenCV.js
+//   const stitchImages = useCallback(async () => {
+//     try {
+//       // Load OpenCV.js
+//       const cv = await loadOpenCV();
+//       console.log('OpenCV.js loaded.');
+
+//       // Collect captured images
+//       const imageElements = await Promise.all(
+//         capturedThumbnails.map(dataURL => dataURLToImageElement(dataURL))
+//       );
+
+//       const images = imageElements.map(img => {
+//         const src = cv.imread(img);
+//         return src;
+//       });
+
+//       // Create a stitcher instance
+//       const stitcher = cv.Stitcher.create(cv.Stitcher_PANORAMA);
+      
+//       // Perform stitching
+//       const pano = new cv.Mat();
+//       const status = new cv.Mat();
+//       const result = stitcher.stitch(images, pano, status);
+
+//       if (result !== cv.Stitcher_OK) {
+//         console.error('Stitching failed with status:', result);
+//         setInstructions("Stitching failed. Please try capturing again.");
+//         setIsStitching(false);
+//         return;
+//       }
+
+//       // Convert the stitched panorama to a Data URL
+//       cv.imshow('canvas-output', pano);
+//       const canvas = document.getElementById('canvas-output');
+//       const stitchedDataURL = canvas.toDataURL('image/png');
+//       setStitchedPanorama(stitchedDataURL);
+//       setIsStitching(false);
+//       setIsPanoramaComplete(true);
+//       setInstructions("Stitching completed. You can preview your panorama.");
+
+//       // Cleanup
+//       images.forEach(img => img.delete());
+//       stitcher.delete();
+//       pano.delete();
+//       status.delete();
+//       cv.destroyAllWindows();
+//     } catch (error) {
+//       console.error('Error during stitching:', error);
+//       setInstructions("An error occurred during stitching. Please try again.");
+//       setIsStitching(false);
+//     }
+//   }, [capturedThumbnails, loadOpenCV]);
+
+//   // Styles for Directional Arrows and other UI elements
 //   const arrowButtonStyle = {
 //     padding: '10px',
 //     background: 'rgba(255,255,255,0.3)',
@@ -1628,48 +1624,22 @@ export default PanoramaViewer;
 //   };
 
 //   return (
-//     <div style={{ position: 'relative', width: '100%', height: '100vh', overflow: 'hidden', backgroundColor: '#000' }}>
+//     <div className="panorama-viewer-container">
 //       {/* Three.js Mount Point */}
 //       <div
 //         ref={mountRef}
-//         style={{
-//           width: '100%',
-//           height: '100%',
-//           display: 'block',
-//           position: 'absolute',
-//           top: 0,
-//           left: 0
-//         }}
+//         className="threejs-mount"
+//         aria-label="Panorama Viewer"
 //       />
       
 //       {/* Center Reticle */}
 //       <div 
-//         style={{
-//           position: 'absolute', 
-//           top: '50%', 
-//           left: '50%', 
-//           transform: 'translate(-50%, -50%)',
-//           zIndex: 2, 
-//           width: '30px', 
-//           height: '30px', 
-//           border: '3px solid white', 
-//           borderRadius: '50%',
-//           background: 'rgba(255,255,255,0.1)'
-//         }}
+//         className="center-reticle"
+//         aria-hidden="true"
 //       />
       
 //       {/* Directional Arrows */}
-//       <div
-//         style={{
-//           position: 'absolute',
-//           bottom: '20px',
-//           left: '50%',
-//           transform: 'translateX(-50%)',
-//           zIndex: 2,
-//           display: 'flex',
-//           gap: '10px'
-//         }}
-//       >
+//       <div className="directional-arrows">
 //         <button
 //           onClick={() => {
 //             // Rotate clockwise
@@ -1677,6 +1647,7 @@ export default PanoramaViewer;
 //           }}
 //           style={arrowButtonStyle}
 //           aria-label="Rotate Clockwise"
+//           title="Rotate Clockwise"
 //         >
 //           &#8594;
 //         </button>
@@ -1687,6 +1658,7 @@ export default PanoramaViewer;
 //           }}
 //           style={arrowButtonStyle}
 //           aria-label="Rotate Counter-Clockwise"
+//           title="Rotate Counter-Clockwise"
 //         >
 //           &#8592;
 //         </button>
@@ -1694,88 +1666,60 @@ export default PanoramaViewer;
       
 //       {/* Instructions and Capture Button */}
 //       <div 
-//         style={{ 
-//           position: 'absolute', 
-//           top: '10px', 
-//           left: '10px', 
-//           zIndex: 1, 
-//           color: 'white', 
-//           background: 'rgba(0,0,0,0.7)', 
-//           padding: '20px',
-//           borderRadius: '8px',
-//           maxWidth: '350px',
-//           fontFamily: 'Arial, sans-serif',
-//           boxShadow: '0 0 15px rgba(0,0,0,0.5)'
-//         }}
+//         className="instructions-panel"
+//         role="region"
+//         aria-labelledby="instructions-heading"
 //       >
 //         {/* Capture Button */}
 //         {queueReady && captureCount < maxCaptures && captureQueueRef.current.length > 0 && !firstCaptureDoneRef.current && (
 //           <button
 //             onClick={captureImage}
-//             style={{
-//               padding: '12px 25px',
-//               background: '#ffffffee',
-//               border: 'none',
-//               cursor: 'pointer',
-//               marginBottom: '15px',
-//               borderRadius: '5px',
-//               fontWeight: 'bold',
-//               fontSize: '16px',
-//               transition: 'background 0.3s',
-//             }}
-//             onMouseOver={(e) => e.target.style.background = '#ffffff'}
-//             onMouseOut={(e) => e.target.style.background = '#ffffffee'}
+//             className="capture-button"
+//             aria-label="Capture Image"
+//             title="Capture Image"
 //           >
 //             Capture
 //           </button>
 //         )}
         
 //         {/* Instructions */}
-//         <div style={{ marginBottom: '10px', fontSize: '16px' }}>{instructions}</div>
+//         <div className="instructions-text" id="instructions-heading">{instructions}</div>
         
 //         {/* Capture Status */}
-//         <div style={{ marginTop: '10px', fontSize: '14px' }}>
+//         <div className="capture-status">
 //           <strong>Captures:</strong> {captureCount} / {maxCaptures}
 //         </div>
         
 //         {/* Progress Bar */}
-//         <div style={{ marginTop: '10px' }}>
-//           <progress value={captureCount} max={maxCaptures} style={{ width: '100%', height: '10px' }}></progress>
-//           <span style={{ color: '#fff' }}>{` ${captureCount} / ${maxCaptures}`}</span>
+//         <div className="progress-bar-container">
+//           <progress value={captureCount} max={maxCaptures} className="progress-bar"></progress>
+//           <span className="progress-text">{` ${captureCount} / ${maxCaptures}`}</span>
+//         </div>
+
+//         {/* Capture Resolution Selector */}
+//         <div className="resolution-selector">
+//           <label htmlFor="resolution" className="resolution-label">Capture Resolution:</label>
+//           <select
+//             id="resolution"
+//             value={captureResolution}
+//             onChange={(e) => setCaptureResolution(e.target.value)}
+//             aria-label="Select Capture Resolution"
+//           >
+//             <option value="640x360">640x360</option>
+//             <option value="1280x720">1280x720</option>
+//             <option value="1920x1080">1920x1080</option>
+//           </select>
 //         </div>
 //       </div>
       
 //       {/* Reset Button */}
 //       {captureCount > 0 && !isPanoramaComplete && (
-//         <div
-//           style={{
-//             position: 'absolute',
-//             top: '10px',
-//             right: '10px',
-//             zIndex: 1, 
-//             color: 'white', 
-//             background: 'rgba(0,0,0,0.7)', 
-//             padding: '10px',
-//             borderRadius: '5px',
-//             maxWidth: '150px',
-//             fontFamily: 'Arial, sans-serif',
-//             boxShadow: '0 0 15px rgba(0,0,0,0.5)'
-//           }}
-//         >
+//         <div className="reset-button-container">
 //           <button
 //             onClick={resetPanorama}
-//             style={{
-//               padding: '10px 20px',
-//               background: '#ffffffee',
-//               border: 'none',
-//               cursor: 'pointer',
-//               borderRadius: '5px',
-//               fontWeight: 'bold',
-//               fontSize: '14px',
-//               transition: 'background 0.3s',
-//             }}
-//             onMouseOver={(e) => e.target.style.background = '#ffffff'}
-//             onMouseOut={(e) => e.target.style.background = '#ffffffee'}
+//             className="reset-button"
+//             aria-label="Reset Panorama Capture"
+//             title="Reset Panorama Capture"
 //           >
 //             Reset
 //           </button>
@@ -1785,54 +1729,35 @@ export default PanoramaViewer;
 //       {/* Flash Effect for Visual Feedback */}
 //       {showFlash && (
 //         <div
-//           style={{
-//             position: 'absolute',
-//             top: 0,
-//             left: 0,
-//             width: '100%',
-//             height: '100%',
-//             backgroundColor: 'rgba(255,255,255,0.8)',
-//             zIndex: 3,
-//             pointerEvents: 'none',
-//             transition: 'opacity 0.2s',
-//           }}
+//           className="flash-effect"
+//           aria-hidden="true"
 //         />
 //       )}
       
+//       {/* Stitching Progress Overlay */}
+//       {isStitching && (
+//         <div className="stitching-overlay" role="alert" aria-live="assertive">
+//           <div className="stitching-content">
+//             <h2>Stitching Images...</h2>
+//             <p>Please wait while your panorama is being created.</p>
+//             <div className="spinner"></div>
+//           </div>
+//         </div>
+//       )}
+      
 //       {/* Panorama Completion Overlay */}
-//       {isPanoramaComplete && !previewPanorama && (
+//       {isPanoramaComplete && !stitchedPanorama && (
 //         <div
-//           style={{
-//             position: 'absolute',
-//             top: '50%',
-//             left: '50%',
-//             transform: 'translate(-50%, -50%)',
-//             zIndex: 4,
-//             color: 'white',
-//             background: 'rgba(0,0,0,0.8)',
-//             padding: '25px',
-//             borderRadius: '10px',
-//             textAlign: 'center',
-//             fontFamily: 'Arial, sans-serif',
-//             boxShadow: '0 0 20px rgba(0,0,0,0.7)'
-//           }}
+//           className="completion-overlay"
+//           role="dialog"
+//           aria-labelledby="completion-heading"
 //         >
-//           <h2>Panorama Completed!</h2>
+//           <h2 id="completion-heading">Panorama Completed!</h2>
 //           <button
 //             onClick={previewPanoramaHandler}
-//             style={{
-//               padding: '12px 25px',
-//               background: '#ffffffee',
-//               border: 'none',
-//               cursor: 'pointer',
-//               marginTop: '20px',
-//               borderRadius: '5px',
-//               fontWeight: 'bold',
-//               fontSize: '16px',
-//               transition: 'background 0.3s',
-//             }}
-//             onMouseOver={(e) => e.target.style.background = '#ffffff'}
-//             onMouseOut={(e) => e.target.style.background = '#ffffffee'}
+//             className="preview-button"
+//             aria-label="Preview Panorama"
+//             title="Preview Panorama"
 //           >
 //             Preview Panorama
 //           </button>
@@ -1840,82 +1765,99 @@ export default PanoramaViewer;
 //       )}
       
 //       {/* Panorama Preview Modal */}
-//       {previewPanorama && (
+//       {stitchedPanorama && (
 //         <div
-//           style={{
-//             position: 'absolute',
-//             top: 0,
-//             left: 0,
-//             width: '100%',
-//             height: '100%',
-//             backgroundColor: 'rgba(0,0,0,0.9)',
-//             zIndex: 5,
-//             display: 'flex',
-//             alignItems: 'center',
-//             justifyContent: 'center'
-//           }}
+//           className="preview-modal"
+//           role="dialog"
+//           aria-labelledby="preview-heading"
 //         >
-//           <div
-//             style={{
-//               position: 'relative',
-//               width: '80%',
-//               height: '80%',
-//               backgroundColor: '#000',
-//               borderRadius: '10px',
-//               overflow: 'hidden',
-//               boxShadow: '0 0 30px rgba(0,0,0,0.8)'
-//             }}
-//           >
+//           <div className="preview-content">
 //             <img 
-//               src={previewPanorama} 
+//               src={stitchedPanorama} 
 //               alt="Panorama Preview" 
-//               style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
+//               className="preview-image"
 //             />
 //             <button
 //               onClick={exportPanorama}
-//               style={{
-//                 position: 'absolute',
-//                 bottom: '20px',
-//                 left: '50%',
-//                 transform: 'translateX(-50%)',
-//                 padding: '10px 20px',
-//                 background: '#ffffffee',
-//                 border: 'none',
-//                 cursor: 'pointer',
-//                 borderRadius: '5px',
-//                 fontWeight: 'bold',
-//                 fontSize: '14px',
-//                 transition: 'background 0.3s',
-//               }}
-//               onMouseOver={(e) => e.target.style.background = '#ffffff'}
-//               onMouseOut={(e) => e.target.style.background = '#ffffffee'}
+//               className="export-button"
+//               aria-label="Export Panorama"
+//               title="Export Panorama"
 //             >
 //               Export Panorama
 //             </button>
 //             <button
 //               onClick={closePreview}
-//               style={{
-//                 position: 'absolute',
-//                 top: '20px',
-//                 right: '20px',
-//                 padding: '8px 16px',
-//                 background: '#ff4d4dee',
-//                 border: 'none',
-//                 cursor: 'pointer',
-//                 borderRadius: '5px',
-//                 fontWeight: 'bold',
-//                 fontSize: '14px',
-//                 color: '#fff',
-//                 transition: 'background 0.3s',
-//               }}
-//               onMouseOver={(e) => e.target.style.background = '#ff4d4d'}
-//               onMouseOut={(e) => e.target.style.background = '#ff4d4dee'}
+//               className="close-preview-button"
+//               aria-label="Close Preview"
+//               title="Close Preview"
 //             >
 //               Close
 //             </button>
 //           </div>
 //         </div>
 //       )}
+
+//       {/* Captured Thumbnails Sidebar */}
+//       {capturedThumbnails.length > 0 && (
+//         <div className="thumbnails-sidebar" role="region" aria-labelledby="thumbnails-heading">
+//           <h3 id="thumbnails-heading">Captured Images</h3>
+//           <div className="thumbnails-container">
+//             {capturedThumbnails.map((thumb, index) => (
+//               <img 
+//                 key={index} 
+//                 src={thumb} 
+//                 alt={`Captured ${index + 1}`} 
+//                 className="thumbnail-image" 
+//                 title={`Captured Image ${index + 1}`}
+//               />
+//             ))}
+//           </div>
+//         </div>
+//       )}
+
+//       {/* Help Modal */}
+//       <div className="help-button-container">
+//         <button
+//           onClick={() => setShowHelpModal(true)}
+//           className="help-button"
+//           aria-label="Open Help"
+//           title="Open Help"
+//         >
+//           ?
+//         </button>
+//       </div>
+
+//       {showHelpModal && (
+//         <div
+//           className="help-modal"
+//           role="dialog"
+//           aria-labelledby="help-heading"
+//           aria-describedby="help-description"
+//         >
+//           <div className="help-content">
+//             <h2 id="help-heading">How to Use Panorama Viewer</h2>
+//             <p id="help-description">
+//               1. Press the "Capture" button to take the first image.<br />
+//               2. Rotate your device or use the on-screen arrows to align the red marker with the center reticle.<br />
+//               3. The app will automatically capture images as you align the marker.<br />
+//               4. Once all captures are completed, the app will stitch the images into a panorama.<br />
+//               5. Preview your panorama and export it as an image.<br />
+//               6. You can reset the capture process at any time by pressing the "Reset" button.
+//             </p>
+//             <button
+//               onClick={() => setShowHelpModal(false)}
+//               className="close-help-button"
+//               aria-label="Close Help"
+//               title="Close Help"
+//             >
+//               Close
+//             </button>
+//           </div>
+//         </div>
+//       )}
+
+//       {/* Hidden Canvas for OpenCV.js Output */}
+//       <canvas id="canvas-output" style={{ display: 'none' }}></canvas>
 //     </div>
 //   );
 // };
@@ -1973,15 +1915,6 @@ export default PanoramaViewer;
 // }
 
 // export default PanoramaViewer;
-
-
-
-
-
-
-
-
-
 
 
 
