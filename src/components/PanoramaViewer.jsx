@@ -53,14 +53,24 @@ const PanoramaViewer = () => {
   // **Updated Azimuthal Increments Based on New hfov=40°**
   // Adjusted to minimize total captures while ensuring comprehensive coverage.
   const azimuthIncrements = useMemo(() => ({
-    90: 360,   // Zenith: 1 capture (360° increments)
-    60: 60,    // +60°: 6 captures (60° increments)
-    30: 45,    // +30°: 8 captures (45° increments)
     0: 40,     // Equator: 9 captures (40° increments)
+    30: 45,    // +30°: 8 captures (45° increments)
+    60: 60,    // +60°: 6 captures (60° increments)
+    90: 360,   // Zenith: 1 capture (360° increments)
     '-30': 45, // -30°: 8 captures (45° increments)
     '-60': 60, // -60°: 6 captures (60° increments)
     '-90': 360  // Nadir: 1 capture (360° increments) **[Optional: Adjusted]**
   }), []);
+
+  //   const azimuthIncrements = useMemo(() => ({
+//     0: 40,    // Equator: 9 captures (40° increments)
+//     30: 45,   // +30°: 8 captures (45° increments)
+//     '-30': 45, // -30°: 8 captures (45° increments)
+//     60: 60,   // +60°: 6 captures (60° increments)
+//     '-60': 60, // -60°: 6 captures (60° increments)
+//     90: 360,  // **Zenith: 1 capture (360° increments)**
+//     '-90': 360  // Nadir: 4 captures (90° increments)
+//   }), []);
 
   // **Note**: With the updated increments, `maxCaptures` is now 38.
   // Calculation:
