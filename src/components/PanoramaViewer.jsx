@@ -20,12 +20,12 @@ const PanoramaViewer = () => {
   const hiddenCanvasRef = useRef(null);
 
   // Sphere and placement settings
-  const sphereRadius = 5; // **Changed from 10 to 5**
+  const sphereRadius = 5; // Changed from 10 to 5 for better performance on mobile
   const offsetFromSurface = 0.01;
 
   // Global Configuration
-  const hfov = 40; // **Changed from 60° to 40°**
-  const vfov = 60; // Remains unchanged
+  const hfov = 40; // Horizontal Field of View in degrees
+  const vfov = 60; // Vertical Field of View in degrees
 
   // Helper function to convert degrees to radians
   const degToRad = (degrees) => degrees * (Math.PI / 180);
@@ -46,6 +46,10 @@ const PanoramaViewer = () => {
     return calculatePlaneDimensions(sphereRadius, hfov, vfov);
   }, [sphereRadius, hfov, vfov]);
 
+  // **Updated Elevation Levels Order: Start from Equator and Move Upward then Downward**
+  // This ensures captures begin at the Equator, move up to Zenith, then down to Nadir.
+  const elevationLevels = useMemo(() => [0, 30, 60, 90, -30, -60, -90], []);
+
   // **Updated Azimuthal Increments Based on Your Specification**
   const azimuthIncrements = useMemo(() => ({
     0: 40,     // Equator: 9 captures (40° increments)
@@ -54,12 +58,11 @@ const PanoramaViewer = () => {
     90: 360,   // Zenith: 1 capture (360° increments)
     '-30': 45, // -30°: 8 captures (45° increments)
     '-60': 60, // -60°: 6 captures (60° increments)
-    '-90': 360  // Nadir: 4 captures (90° increments) **[Adjusted to match the comment]**
+    '-90': 90  // Nadir: 4 captures (90° increments)
   }), []);
 
   // **Total Captures Calculation: 42**
-  const elevationLevels = useMemo(() => [0, 30, -30, 60, -60, 90, -90], []);
-
+  // 0°: 9 + 30°: 8 + 60°: 6 + 90°: 1 + -30°: 8 + -60°: 6 + -90°: 4 = **42 captures**
   const maxCaptures = useMemo(() => {
     return elevationLevels.reduce((total, elev) => {
       const increment = azimuthIncrements[elev] || 60; // Default to 60° if not defined
@@ -103,7 +106,7 @@ const PanoramaViewer = () => {
   const firstCaptureDoneRef = useRef(false);
 
   // State variables for UI
-  const [instructions, setInstructions] = useState("Keep your device straight and press 'Capture' to take the first image.");
+  const [instructions, setInstructions] = useState("Keep your device straight and press 'Capture' to take the first image at the Equator.");
   const [captureCount, setCaptureCount] = useState(0);
   const [showFlash, setShowFlash] = useState(false); // For visual feedback
   const [isPanoramaComplete, setIsPanoramaComplete] = useState(false);
@@ -193,7 +196,7 @@ const PanoramaViewer = () => {
     videoTextureRef.current = videoTexture;
 
     // **Create the Video Plane with Updated Dimensions and Optimized Segments**
-    const planeGeometry = new THREE.PlaneGeometry(planeWidth, planeHeight, 8, 8); // **Segments reduced for performance**
+    const planeGeometry = new THREE.PlaneGeometry(planeWidth, planeHeight, 8, 8); // Segments reduced for performance
     const planeMaterial = new THREE.MeshBasicMaterial({ map: videoTexture, side: THREE.DoubleSide });
     const videoPlane = new THREE.Mesh(planeGeometry, planeMaterial);
     scene.add(videoPlane);
@@ -349,10 +352,10 @@ const PanoramaViewer = () => {
 
         // Update Instructions
         if (!isAuto) {
-          setInstructions("Image captured. Rotate the device to align the next marker for automatic capture.");
+          setInstructions("Image captured at Equator. Tilt your device upward to align with the next marker for automatic capture.");
           firstCaptureDoneRef.current = true;
         } else {
-          setInstructions(`Image ${captureCountRef.current} captured. Rotate to align and auto-capture again.`);
+          setInstructions(`Image ${captureCountRef.current} captured. Continue aligning your device for the next capture.`);
         }
 
         // Move Video Plane and Marker to New Azimuth and Elevation
@@ -426,7 +429,7 @@ const PanoramaViewer = () => {
 
     // Reset state variables
     setCaptureCount(0);
-    setInstructions("Keep your device straight and press 'Capture' to take the first image.");
+    setInstructions("Keep your device straight and press 'Capture' to take the first image at the Equator.");
     setIsPanoramaComplete(false);
     setPreviewPanorama(null);
     setQueueReady(false); // Temporarily set to false during reinitialization
@@ -517,7 +520,7 @@ const PanoramaViewer = () => {
       adjustedHeight *= 1.2; // Increase height by 20%
     }
     
-    const geometry = new THREE.PlaneGeometry(width, adjustedHeight, 8, 8); // **Segments optimized**
+    const geometry = new THREE.PlaneGeometry(width, adjustedHeight, 8, 8); // Segments optimized
     const material = new THREE.MeshBasicMaterial({ map: texture, side: THREE.FrontSide });
     return new THREE.Mesh(geometry, material);
   }
@@ -891,7 +894,7 @@ function createCapturedPlane(texture, width, height, elevation = 0) {
     adjustedHeight *= 1.2; // Increase height by 20%
   }
   
-  const geometry = new THREE.PlaneGeometry(width, adjustedHeight, 8, 8); // **Segments optimized**
+  const geometry = new THREE.PlaneGeometry(width, adjustedHeight, 8, 8); // Segments optimized
   const material = new THREE.MeshBasicMaterial({ map: texture, side: THREE.FrontSide });
   return new THREE.Mesh(geometry, material);
 }
