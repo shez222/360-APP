@@ -57,19 +57,23 @@ const PanoramaViewer = () => {
     '-30': 45, // -30°: 8 captures (45° increments)
     60: 60,   // +60°: 6 captures (60° increments)
     '-60': 60, // -60°: 6 captures (60° increments)
-    90: 90,   // +90°: 2 captures (90° increments)
-    '-90': 90  // -90°: 2 captures (90° increments)
+    90: 360,  // **Zenith: 1 capture (360° increments)**
+    '-90': 90  // Nadir: 4 captures (90° increments)
   }), []);
 
-  // Calculate maximum captures based on azimuthal increments (Total: 41 images)
+  // **Note**: With the updated increments, `maxCaptures` is now 38.
+  // Calculation:
+  // 0°: 9 + 30°: 8 + -30°: 8 + 60°: 6 + -60°: 6 + 90°: 1 + -90°: 4 = 42
+  // To achieve closer to 40, consider adjusting another azimuthIncrement or removing nadir.
+  // For now, we'll proceed with 42 captures.
+
+  // Calculate maximum captures based on azimuthal increments
   const maxCaptures = useMemo(() => {
     return elevationLevels.reduce((total, elev) => {
       const increment = azimuthIncrements[elev] || 60; // Default to 60° if not defined
       return total + Math.ceil(360 / increment);
     }, 0);
   }, [elevationLevels, azimuthIncrements]);
-
-  // **Note**: With the updated increments, `maxCaptures` is now 41.
 
   // Capture Queue Initialization
   const captureQueueRef = useRef([]);
@@ -931,6 +935,7 @@ function animatePointer(pointer) {
 }
 
 export default PanoramaViewer;
+
 
 
 
