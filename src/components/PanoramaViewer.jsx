@@ -58,7 +58,7 @@ const PanoramaViewer = () => {
     90: 360,   // Zenith: 1 capture (360° increments)
     '-30': 45, // -30°: 8 captures (45° increments)
     '-60': 60, // -60°: 6 captures (60° increments)
-    '-90': 90  // Nadir: 4 captures (90° increments)
+    '-90': 360  // Nadir: 4 captures (90° increments)
   }), []);
 
   // **Total Captures Calculation: 42**
