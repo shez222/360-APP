@@ -302,6 +302,18 @@ const PanoramaViewer = () => {
     if (queue.length === 0) {
       setInstructions("All captures completed. Preview your panorama!");
       setIsPanoramaComplete(true);
+
+      // **Hide videoPlane and marker after completion**
+      if (videoPlaneRef.current) {
+        videoPlaneRef.current.visible = false;
+      }
+      if (markerRef.current) {
+        markerRef.current.visible = false;
+      }
+
+      // **Stop all tweens to prevent residual animations**
+      TWEEN.removeAll();
+
       return;
     }
 
@@ -373,6 +385,17 @@ const PanoramaViewer = () => {
         if (captureCountRef.current >= maxCaptures) {
           setInstructions("All captures completed. Preview your panorama!");
           setIsPanoramaComplete(true);
+
+          // **Hide videoPlane and marker after completion**
+          if (videoPlaneRef.current) {
+            videoPlaneRef.current.visible = false;
+          }
+          if (markerRef.current) {
+            markerRef.current.visible = false;
+          }
+
+          // **Stop all tweens to prevent residual animations**
+          TWEEN.removeAll();
         }
 
         resolve();
@@ -456,6 +479,17 @@ const PanoramaViewer = () => {
       placeObjectOnSphere(videoPlane, firstCapture.azimuth, firstCapture.elevation);
       placeObjectOnSphere(marker, firstCapture.azimuth, firstCapture.elevation);
     }
+
+    // **Show videoPlane and marker again after reset**
+    if (videoPlaneRef.current) {
+      videoPlaneRef.current.visible = true;
+    }
+    if (markerRef.current) {
+      markerRef.current.visible = true;
+    }
+
+    // **Restart all tweens**
+    TWEEN.removeAll();
   }, [elevationLevels, azimuthIncrements, placeObjectOnSphere, maxCaptures]);
 
   // Function to preview the panorama
@@ -527,6 +561,9 @@ const PanoramaViewer = () => {
 
   // Function to add a middle pointer to a captured plane
   function addMiddlePointer(capturedPlane, azimuthDeg, elevationDeg) {
+    // Only add pointer if azimuth and elevation are valid numbers
+    if (typeof azimuthDeg !== 'number' || typeof elevationDeg !== 'number') return;
+
     const pointerGeometry = new THREE.SphereGeometry(0.05, 16, 16);
     const pointerMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff00 }); // Green color for pointers
     const pointer = new THREE.Mesh(pointerGeometry, pointerMaterial);
@@ -901,6 +938,9 @@ function createCapturedPlane(texture, width, height, elevation = 0) {
 
 // Function to add a middle pointer to a captured plane
 function addMiddlePointer(capturedPlane, azimuthDeg, elevationDeg) {
+  // Only add pointer if azimuth and elevation are valid numbers
+  if (typeof azimuthDeg !== 'number' || typeof elevationDeg !== 'number') return;
+
   const pointerGeometry = new THREE.SphereGeometry(0.05, 16, 16);
   const pointerMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff00 }); // Green color for pointers
   const pointer = new THREE.Mesh(pointerGeometry, pointerMaterial);
