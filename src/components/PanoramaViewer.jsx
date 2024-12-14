@@ -8,59 +8,53 @@ import { saveAs } from 'file-saver'; // For exporting panoramas
 import TWEEN from '@tweenjs/tween.js'; // For animations
 
 const PanoramaViewer = () => {
-  // Refs for Three.js components
+  // State Variables
+  const [isStable, setIsStable] = useState(false); // Stability state
+  const [lastCaptureOrientation, setLastCaptureOrientation] = useState({ azimuth: null, elevation: null });
+  const [instructions, setInstructions] = useState("Keep your device straight and press 'Capture' to take the first image at the Equator.");
+  const [captureCount, setCaptureCount] = useState(0);
+  const [showFlash, setShowFlash] = useState(false); // For visual feedback
+  const [isPanoramaComplete, setIsPanoramaComplete] = useState(false);
+  const [previewPanorama, setPreviewPanorama] = useState(null);
+  const [thumbnails, setThumbnails] = useState([]); // Thumbnails of captures
+  const [queueReady, setQueueReady] = useState(false); // Indicates if the capture queue is ready
+
+  // Refs
   const mountRef = useRef(null);
   const rendererRef = useRef(null);
   const cameraRef = useRef(null);
   const sceneRef = useRef(null);
-
   const videoPlaneRef = useRef(null);
   const videoTextureRef = useRef(null);
   const markerRef = useRef(null);
   const hiddenCanvasRef = useRef(null);
+  const captureQueueRef = useRef([]);
+  const capturedPlanesRef = useRef([]);
+  const captureCountRef = useRef(0);
+  const capturingRef = useRef(false);
+  const firstCaptureDoneRef = useRef(false);
+  const stabilityTimeoutRef = useRef(null);
 
-  // Sphere and placement settings
+  // Constants
   const sphereRadius = 5; // Adjusted for performance
   const offsetFromSurface = 0.01;
-
-  // Global Configuration
   const hfov = 40; // Horizontal Field of View in degrees
   const vfov = 60; // Vertical Field of View in degrees
+  const AZIMUTH_THRESHOLD = 30;  // Degrees
+  const ELEVATION_THRESHOLD = 15; // Degrees
+  const motionThreshold = 0.05; // Increased threshold
+  const stableDuration = 300; // Reduced duration in ms
 
-  // Helper function to convert degrees to radians
-  const degToRad = (degrees) => degrees * (Math.PI / 180);
-
-  // Function to calculate plane dimensions based on FOV and sphere radius
-  const calculatePlaneDimensions = (sphereRadius, hfovDeg, vfovDeg) => {
-    const hfovRad = degToRad(hfovDeg);
-    const vfovRad = degToRad(vfovDeg);
-    
-    const width = 2 * sphereRadius * Math.tan(hfovRad / 2);
-    const height = 2 * sphereRadius * Math.tan(vfovRad / 2);
-    
-    return { width, height };
-  };
-
-  // Calculate plane dimensions
-  const { width: planeWidth, height: planeHeight } = useMemo(() => {
-    return calculatePlaneDimensions(sphereRadius, hfov, vfov);
-  }, [sphereRadius, hfov, vfov]);
-
-  // Elevation Levels Order: Equator, Upward, Downward
-  const elevationLevels = useMemo(() => [0, 30, 60, 90, -30, -60, -90], []);
-
-  // Azimuthal Increments
+  // Azimuth Increments and Elevation Levels for 16 Captures
+  const elevationLevels = useMemo(() => [0, 45, 90, -45, -90], []);
   const azimuthIncrements = useMemo(() => ({
-    0: 40,     // Equator: 9 captures (40° increments)
-    30: 45,    // +30°: 8 captures (45° increments)
-    60: 60,    // +60°: 6 captures (60° increments)
-    90: 360,   // Zenith: 1 capture (360° increments)
-    '-30': 45, // -30°: 8 captures (45° increments)
-    '-60': 60, // -60°: 6 captures (60° increments)
-    '-90': 360  // Nadir: 4 captures (90° increments)
+    0: 60,    // Equator: 6 captures
+    45: 90,   // +45°: 4 captures
+    90: 360,  // Zenith: 1 capture
+    '-45': 90, // -45°: 4 captures
+    '-90': 360 // Nadir: 1 capture
   }), []);
 
-  // Total Captures Calculation: 42
   const maxCaptures = useMemo(() => {
     return elevationLevels.reduce((total, elev) => {
       const increment = azimuthIncrements[elev] || 60; // Default to 60° if not defined
@@ -68,54 +62,193 @@ const PanoramaViewer = () => {
     }, 0);
   }, [elevationLevels, azimuthIncrements]);
 
-  // Capture Queue Initialization
-  const captureQueueRef = useRef([]);
+  // Calculate plane dimensions based on FOV and sphere radius
+  const calculatePlaneDimensions = (sphereRadius, hfovDeg, vfovDeg) => {
+    const rad = (deg) => deg * (Math.PI / 180);
+    const hfovRad = rad(hfovDeg);
+    const vfovRad = rad(vfovDeg);
+    const width = 2 * sphereRadius * Math.tan(hfovRad / 2);
+    const height = 2 * sphereRadius * Math.tan(vfovRad / 2);
+    return { width, height };
+  };
 
-  // Ref to store all captured planes
-  const capturedPlanesRef = useRef([]);
+  const { width: planeWidth, height: planeHeight } = useMemo(() => {
+    return calculatePlaneDimensions(sphereRadius, hfov, vfov);
+  }, [sphereRadius, hfov, vfov]);
 
-  // State to indicate when the capture queue is ready
-  const [queueReady, setQueueReady] = useState(false);
+  // Generate Geodesic Points (Optional: Replace with Fibonacci Sphere if preferred)
+  const generateGeodesicPoints = (samples) => {
+    const points = [];
+    const phi = Math.PI * (3 - Math.sqrt(5)); // Golden angle in radians
 
-  // Initialize the capture queue in the desired order
+    for (let i = 0; i < samples; i++) {
+      const y = 1 - (i / (samples - 1)) * 2; // y goes from 1 to -1
+      const radius = Math.sqrt(1 - y * y); // Radius at y
+      const theta = phi * i; // Golden angle increment
+
+      const x = Math.cos(theta) * radius;
+      const z = Math.sin(theta) * radius;
+
+      // Convert Cartesian to Spherical coordinates
+      const azimuth = THREE.MathUtils.radToDeg(Math.atan2(x, z)); // Range: -180 to 180
+      const elevation = THREE.MathUtils.radToDeg(Math.asin(y)); // Range: -90 to 90
+
+      points.push({ azimuth, elevation });
+    }
+
+    return points;
+  };
+
+  const geodesicPoints = useMemo(() => generateGeodesicPoints(maxCaptures), [maxCaptures]);
+
+  // Initialize the capture queue
   useEffect(() => {
     const initializeQueue = () => {
-      const queue = [];
-      elevationLevels.forEach(elev => {
-        const increment = azimuthIncrements[elev] || 60;
-        const captures = Math.ceil(360 / increment);
-        for (let i = 0; i < captures; i++) {
-          queue.push({ azimuth: i * increment, elevation: elev });
-        }
-      });
-      // Ensure the queue has exactly maxCaptures images
-      while (queue.length > maxCaptures) {
-        queue.pop();
-      }
-      captureQueueRef.current = queue;
+      // Using Geodesic Points for Optimal Coverage
+      captureQueueRef.current = geodesicPoints;
       setQueueReady(true); // Indicate that the queue is ready
     };
     initializeQueue();
-  }, [elevationLevels, azimuthIncrements, maxCaptures]);
+  }, [geodesicPoints]);
 
-  // Refs for mutable variables
-  const captureCountRef = useRef(0);
-  const capturingRef = useRef(false);
-  const firstCaptureDoneRef = useRef(false);
-
-  // State variables for UI
-  const [instructions, setInstructions] = useState("Keep your device straight and press 'Capture' to take the first image at the Equator.");
-  const [captureCount, setCaptureCount] = useState(0);
-  const [showFlash, setShowFlash] = useState(false); // For visual feedback
-  const [isPanoramaComplete, setIsPanoramaComplete] = useState(false);
-  const [previewPanorama, setPreviewPanorama] = useState(null);
-  const [isStable, setIsStable] = useState(false); // Stability state
-  const [thumbnails, setThumbnails] = useState([]); // Thumbnails of captures
-
-  // Ref for stability timeout
-  const stabilityTimeoutRef = useRef(null);
-  const motionThreshold = 0.05; // Increased threshold
-  const stableDuration = 300; // Reduced duration in ms
+    // Perform Capture Function
+    const performCapture = useCallback((isAuto, azimuth, elevation) => {
+      // Prevent capture if device is not stable
+      if (!isStable) {
+        console.warn('Device is moving. Please hold steady to capture a clear image.');
+        setInstructions('Device is moving. Please hold steady to capture a clear image.');
+        return Promise.resolve(); // Exit early without capturing
+      }
+  
+      // Prevent multiple captures in quick succession
+      if (capturingRef.current) {
+        return Promise.resolve();
+      }
+  
+      capturingRef.current = true;
+  
+      const renderer = rendererRef.current;
+      const scene = sceneRef.current;
+      const videoPlane = videoPlaneRef.current;
+      const marker = markerRef.current;
+      const hiddenCanvas = hiddenCanvasRef.current;
+      const video = videoTextureRef.current?.image;
+  
+      if (!renderer || !scene || !videoPlane || !marker || !hiddenCanvas || !video) {
+        capturingRef.current = false;
+        return Promise.resolve();
+      }
+  
+      if (azimuth === undefined || elevation === undefined) {
+        capturingRef.current = false;
+        return Promise.resolve();
+      }
+  
+      // Draw the current video frame to the hidden canvas
+      const ctx = hiddenCanvas.getContext('2d');
+      hiddenCanvas.width = video.videoWidth || 1280; // Ensure high resolution
+      hiddenCanvas.height = video.videoHeight || 720;
+      ctx.drawImage(video, 0, 0, hiddenCanvas.width, hiddenCanvas.height);
+  
+      // Get the Data URL from the Hidden Canvas
+      const dataURL = hiddenCanvas.toDataURL('image/png');
+  
+      return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+          // Optional: Apply sharpening
+          const sharpenedDataURL = sharpenImage(img);
+  
+          const sharpenedImg = new Image();
+          sharpenedImg.onload = () => {
+            // Create a texture from the sharpened image
+            const capturedTexture = new THREE.Texture(sharpenedImg);
+            capturedTexture.needsUpdate = true;
+  
+            // Create a plane for the captured image with FrontSide
+            const capturedPlane = createCapturedPlane(capturedTexture, planeWidth, planeHeight, elevation);
+            capturedPlane.userData.isCaptured = true; // Tag for potential removal/reset
+            scene.add(capturedPlane);
+  
+            // Place the captured plane on the sphere at the current azimuth and elevation
+            placeObjectOnSphere(capturedPlane, azimuth, elevation);
+  
+            // Store the captured plane reference
+            capturedPlanesRef.current.push(capturedPlane);
+  
+            // Add thumbnail
+            const thumbnailCanvas = document.createElement('canvas');
+            const thumbWidth = 100;
+            const thumbHeight = (sharpenedImg.height / sharpenedImg.width) * thumbWidth;
+            thumbnailCanvas.width = thumbWidth;
+            thumbnailCanvas.height = thumbHeight;
+            const thumbCtx = thumbnailCanvas.getContext('2d');
+            thumbCtx.drawImage(sharpenedImg, 0, 0, thumbWidth, thumbHeight);
+            const thumbDataURL = thumbnailCanvas.toDataURL('image/png');
+            setThumbnails(prev => [...prev, thumbDataURL]);
+  
+            // If there is a previous captured plane, add a middle pointer to it
+            if (capturedPlanesRef.current.length > 1) {
+              const previousPlane = capturedPlanesRef.current[capturedPlanesRef.current.length - 2];
+              addMiddlePointer(previousPlane, azimuth, elevation);
+            }
+  
+            console.log(`Captured image placed at Azimuth: ${azimuth}°, Elevation: ${elevation}°`);
+  
+            // Increment capture count
+            captureCountRef.current += 1;
+            setCaptureCount(captureCountRef.current); // Update state for UI
+  
+            // Update Instructions
+            if (!isAuto) {
+              setInstructions("Image captured. Continue moving your device to capture more images.");
+              firstCaptureDoneRef.current = true;
+            } else {
+              setInstructions(`Image ${captureCountRef.current} captured. Continue aligning your device for the next capture.`);
+            }
+  
+            // Move Video Plane and Marker to New Azimuth and Elevation
+            if (captureQueueRef.current.length > 0) { // Only move if there are more captures
+              const nextCapture = captureQueueRef.current[0];
+              placeObjectOnSphere(videoPlaneRef.current, nextCapture.azimuth, nextCapture.elevation);
+              placeObjectOnSphere(marker, nextCapture.azimuth, nextCapture.elevation);
+            }
+  
+            // Flash Effect for Visual Feedback
+            setShowFlash(true);
+            setTimeout(() => setShowFlash(false), 150); // Reduced flash duration
+  
+            // Check if all captures are done
+            if (captureCountRef.current >= maxCaptures) {
+              setInstructions("All captures completed. Preview your panorama!");
+              setIsPanoramaComplete(true);
+  
+              // **Hide videoPlane and marker after completion**
+              if (videoPlaneRef.current) {
+                videoPlaneRef.current.visible = false;
+              }
+              if (markerRef.current) {
+                markerRef.current.visible = false;
+              }
+  
+              // **Stop all tweens to prevent residual animations**
+              TWEEN.removeAll();
+            }
+  
+            // Trigger haptic feedback if supported
+            if (navigator.vibrate) {
+              navigator.vibrate(100); // Vibrate for 100ms
+            }
+  
+            capturingRef.current = false;
+            resolve();
+          };
+  
+          sharpenedImg.src = sharpenedDataURL;
+        };
+        img.src = dataURL;
+      });
+    }, [planeHeight, planeWidth, maxCaptures, isStable]);
 
   // Initialize Three.js Scene and Components
   useEffect(() => {
@@ -168,9 +301,9 @@ const PanoramaViewer = () => {
     }
 
     // Add a Semi-Transparent Sphere as a Reference (Visible from Inside)
-    const sphereGeometry = new THREE.SphereGeometry(sphereRadius, 64, 64);
+    const sphereGeometry = new THREE.SphereGeometry(sphereRadius, 32, 32); // Reduced segments for performance
     const sphereMaterial = new THREE.MeshBasicMaterial({
-      color: 0x000000,
+      color: 0x44aa88,
       transparent: true,
       opacity: 0.3,
       side: THREE.BackSide // Ensures visibility from inside
@@ -200,7 +333,7 @@ const PanoramaViewer = () => {
     videoTexture.magFilter = THREE.LinearFilter;
     videoTextureRef.current = videoTexture;
 
-    // **Create the Video Plane with Updated Dimensions and Optimized Segments**
+    // Create the Video Plane with Updated Dimensions and Optimized Segments
     const planeGeometry = new THREE.PlaneGeometry(planeWidth, planeHeight, 8, 8); // Segments reduced for performance
     const planeMaterial = new THREE.MeshBasicMaterial({ map: videoTexture, side: THREE.DoubleSide });
     const videoPlane = new THREE.Mesh(planeGeometry, planeMaterial);
@@ -217,6 +350,7 @@ const PanoramaViewer = () => {
       const firstCapture = captureQueueRef.current[0];
       placeObjectOnSphere(videoPlane, firstCapture.azimuth, firstCapture.elevation);
       placeObjectOnSphere(marker, firstCapture.azimuth, firstCapture.elevation);
+      setLastCaptureOrientation({ azimuth: firstCapture.azimuth, elevation: firstCapture.elevation });
     }
 
     // Create a Hidden Canvas for Capturing Video Frames
@@ -240,18 +374,15 @@ const PanoramaViewer = () => {
       if (controls) controls.update();
       renderer.render(scene, camera);
 
-      // After the First Capture, Auto-Capture When Aligned and Stable
+      // **Dynamic Capture Logic**
       if (
-        firstCaptureDoneRef.current &&
         !capturingRef.current &&
         captureCountRef.current < maxCaptures &&
-        isMarkerCentered(camera, marker) &&
-        isStable
+        isStable &&
+        captureQueueRef.current.length > 0
       ) {
-        capturingRef.current = true;
-        autoCaptureImage().then(() => {
-          capturingRef.current = false;
-        });
+        const { azimuth, elevation } = captureQueueRef.current.shift();
+        performCapture(true, azimuth, elevation);
       }
     };
     animate();
@@ -275,7 +406,7 @@ const PanoramaViewer = () => {
       // Stop all tweens
       TWEEN.removeAll();
     };
-  }, [captureQueueRef, maxCaptures, elevationLevels, azimuthIncrements, planeWidth, planeHeight, isStable]);
+  }, [captureQueueRef, maxCaptures, elevationLevels, azimuthIncrements, planeWidth, planeHeight, isStable, performCapture]);
 
   // Configure OrbitControls (Helper Function)
   const configureOrbitControls = useCallback((controls) => {
@@ -341,180 +472,49 @@ const PanoramaViewer = () => {
     };
   }, [isStable]);
 
-  /** Define performCapture BEFORE using it **/
 
-  // Perform Capture Function
-  const performCapture = useCallback((isAuto) => {
-    // Prevent capture if device is not stable
-    if (!isStable) {
-      console.warn('Device is moving. Please hold steady to capture a clear image.');
-      setInstructions('Device is moving. Please hold steady to capture a clear image.');
-      return Promise.resolve(); // Exit early without capturing
-    }
 
-    // Prevent multiple captures in quick succession
-    if (capturingRef.current) {
-      return Promise.resolve();
-    }
-
-    capturingRef.current = true;
-
-    const renderer = rendererRef.current;
-    const scene = sceneRef.current;
-    const videoPlane = videoPlaneRef.current;
-    const marker = markerRef.current;
-    const hiddenCanvas = hiddenCanvasRef.current;
-    const video = videoTextureRef.current?.image;
-    const queue = captureQueueRef.current;
-
-    if (!renderer || !scene || !videoPlane || !marker || !hiddenCanvas || !video) {
-      capturingRef.current = false;
-      return Promise.resolve();
-    }
-
-    if (queue.length === 0) {
-      setInstructions("All captures completed. Preview your panorama!");
-      setIsPanoramaComplete(true);
-
-      // **Hide videoPlane and marker after completion**
-      if (videoPlaneRef.current) {
-        videoPlaneRef.current.visible = false;
-      }
-      if (markerRef.current) {
-        markerRef.current.visible = false;
-      }
-
-      // **Stop all tweens to prevent residual animations**
-      TWEEN.removeAll();
-
-      capturingRef.current = false;
-      return Promise.resolve();
-    }
-
-    const { azimuth, elevation } = queue.shift(); // Dequeue the next capture
-
-    // Draw the current video frame to the hidden canvas
-    const ctx = hiddenCanvas.getContext('2d');
-    hiddenCanvas.width = video.videoWidth || 1280; // Ensure high resolution
-    hiddenCanvas.height = video.videoHeight || 720;
-    ctx.drawImage(video, 0, 0, hiddenCanvas.width, hiddenCanvas.height);
-
-    // Get the Data URL from the Hidden Canvas
-    const dataURL = hiddenCanvas.toDataURL('image/png');
-
-    return new Promise((resolve) => {
-      const img = new Image();
-      img.onload = () => {
-        // Optional: Apply sharpening
-        const sharpenedDataURL = sharpenImage(img);
-
-        const sharpenedImg = new Image();
-        sharpenedImg.onload = () => {
-          // Create a texture from the sharpened image
-          const capturedTexture = new THREE.Texture(sharpenedImg);
-          capturedTexture.needsUpdate = true;
-
-          // Create a plane for the captured image with FrontSide
-          const capturedPlane = createCapturedPlane(capturedTexture, planeWidth, planeHeight, elevation);
-          capturedPlane.userData.isCaptured = true; // Tag for potential removal/reset
-          scene.add(capturedPlane);
-
-          // Place the captured plane on the sphere at the current azimuth and elevation
-          placeObjectOnSphere(capturedPlane, azimuth, elevation);
-
-          // Store the captured plane reference
-          capturedPlanesRef.current.push(capturedPlane);
-
-          // Add thumbnail
-          const thumbnailCanvas = document.createElement('canvas');
-          const thumbWidth = 100;
-          const thumbHeight = (sharpenedImg.height / sharpenedImg.width) * thumbWidth;
-          thumbnailCanvas.width = thumbWidth;
-          thumbnailCanvas.height = thumbHeight;
-          const thumbCtx = thumbnailCanvas.getContext('2d');
-          thumbCtx.drawImage(sharpenedImg, 0, 0, thumbWidth, thumbHeight);
-          const thumbDataURL = thumbnailCanvas.toDataURL('image/png');
-          setThumbnails(prev => [...prev, thumbDataURL]);
-
-          // If there is a previous captured plane, add a middle pointer to it
-          if (capturedPlanesRef.current.length > 1) {
-            const previousPlane = capturedPlanesRef.current[capturedPlanesRef.current.length - 2];
-            const nextCapture = queue[0]; // Peek at the next capture without dequeuing
-
-            if (nextCapture) {
-              addMiddlePointer(previousPlane, nextCapture.azimuth, nextCapture.elevation);
-            }
-          }
-
-          console.log(`Captured image placed at Azimuth: ${azimuth}°, Elevation: ${elevation}°`);
-
-          // Increment capture count
-          captureCountRef.current += 1;
-          setCaptureCount(captureCountRef.current); // Update state for UI
-
-          // Update Instructions
-          if (!isAuto) {
-            setInstructions("Image captured at Equator. Tilt your device upward to align with the next marker for automatic capture.");
-            firstCaptureDoneRef.current = true;
-          } else {
-            setInstructions(`Image ${captureCountRef.current} captured. Continue aligning your device for the next capture.`);
-          }
-
-          // Move Video Plane and Marker to New Azimuth and Elevation
-          if (queue.length > 0) { // Only move if there are more captures
-            const nextCapture = queue[0];
-            placeObjectOnSphere(videoPlaneRef.current, nextCapture.azimuth, nextCapture.elevation);
-            placeObjectOnSphere(marker, nextCapture.azimuth, nextCapture.elevation);
-          }
-
-          // Flash Effect for Visual Feedback
-          setShowFlash(true);
-          setTimeout(() => setShowFlash(false), 150); // Reduced flash duration
-
-          // Check if all captures are done
-          if (captureCountRef.current >= maxCaptures) {
-            setInstructions("All captures completed. Preview your panorama!");
-            setIsPanoramaComplete(true);
-
-            // **Hide videoPlane and marker after completion**
-            if (videoPlaneRef.current) {
-              videoPlaneRef.current.visible = false;
-            }
-            if (markerRef.current) {
-              markerRef.current.visible = false;
-            }
-
-            // **Stop all tweens to prevent residual animations**
-            TWEEN.removeAll();
-          }
-
-          // Trigger haptic feedback if supported
-          if (navigator.vibrate) {
-            navigator.vibrate(100); // Vibrate for 100ms
-          }
-
-          capturingRef.current = false;
-          resolve();
-        };
-
-        sharpenedImg.src = sharpenedDataURL;
-      };
-      img.src = dataURL;
-    });
-  }, [planeHeight, planeWidth, maxCaptures, isStable]);
-
-  // Now define captureImage and autoCaptureImage after performCapture
   // Capture Image Function
   const captureImage = useCallback(() => {
-    if (!capturingRef.current && captureCountRef.current < maxCaptures) {
-      performCapture(false);
+    if (!capturingRef.current && captureCountRef.current < maxCaptures && captureQueueRef.current.length > 0 && isStable) {
+      const { azimuth, elevation } = captureQueueRef.current.shift();
+      performCapture(false, azimuth, elevation);
     }
-  }, [maxCaptures, performCapture]);
+  }, [maxCaptures, performCapture, captureCount, isStable]);
 
-  // Auto Capture Function
-  const autoCaptureImage = useCallback(async () => {
-    return performCapture(true);
-  }, [performCapture]);
+  // Function to get the current device orientation
+  const getCurrentOrientation = useCallback(() => {
+    // This function retrieves the current azimuth and elevation from controls
+    let azimuth = 0;
+    let elevation = 0;
+
+    const controls = cameraRef.current?.controls;
+    if (controls instanceof DeviceOrientationControls) {
+      // DeviceOrientationControls provides device orientation angles
+      azimuth = controls.alpha ? parseFloat(controls.alpha.toFixed(2)) : 0;
+      elevation = controls.beta ? parseFloat(controls.beta.toFixed(2)) : 0;
+    } else if (controls instanceof OrbitControls) {
+      // OrbitControls provides camera rotation
+      const rotation = cameraRef.current.rotation;
+      azimuth = THREE.MathUtils.radToDeg(rotation.y);
+      elevation = THREE.MathUtils.radToDeg(rotation.x);
+    }
+
+    return { azimuth, elevation };
+  }, []);
+
+  // Function to determine whether to capture based on orientation change
+  const shouldCapture = useCallback((current, last) => {
+    if (last.azimuth === null && last.elevation === null) {
+      // If no last capture, capture immediately
+      return true;
+    }
+
+    const azimuthDiff = Math.abs(current.azimuth - last.azimuth);
+    const elevationDiff = Math.abs(current.elevation - last.elevation);
+
+    return azimuthDiff >= AZIMUTH_THRESHOLD || elevationDiff >= ELEVATION_THRESHOLD;
+  }, [AZIMUTH_THRESHOLD, ELEVATION_THRESHOLD]);
 
   // Helper Function to Place Objects on the Sphere
   const placeObjectOnSphere = useCallback((obj, azimuthDeg, elevationDeg) => {
@@ -571,18 +571,7 @@ const PanoramaViewer = () => {
     setThumbnails([]); // Clear thumbnails
 
     // Reset the capture queue
-    const newQueue = [];
-    elevationLevels.forEach(elev => {
-      const increment = azimuthIncrements[elev] || 60;
-      const captures = Math.ceil(360 / increment);
-      for (let i = 0; i < captures; i++) {
-        newQueue.push({ azimuth: i * increment, elevation: elev });
-      }
-    });
-    // Ensure the queue has exactly maxCaptures images
-    while (newQueue.length > maxCaptures) {
-      newQueue.pop();
-    }
+    const newQueue = generateGeodesicPoints(maxCaptures);
     captureQueueRef.current = newQueue;
     setQueueReady(true); // Re-indicate that the queue is ready
 
@@ -591,6 +580,7 @@ const PanoramaViewer = () => {
       const firstCapture = captureQueueRef.current[0];
       placeObjectOnSphere(videoPlane, firstCapture.azimuth, firstCapture.elevation);
       placeObjectOnSphere(marker, firstCapture.azimuth, firstCapture.elevation);
+      setLastCaptureOrientation({ azimuth: firstCapture.azimuth, elevation: firstCapture.elevation });
     }
 
     // **Show videoPlane and marker again after reset**
@@ -603,7 +593,7 @@ const PanoramaViewer = () => {
 
     // **Restart all tweens**
     TWEEN.removeAll();
-  }, [elevationLevels, azimuthIncrements, placeObjectOnSphere, maxCaptures]);
+  }, [maxCaptures, placeObjectOnSphere]);
 
   // Function to preview the panorama
   const previewPanoramaHandler = useCallback(() => {
@@ -650,30 +640,30 @@ const PanoramaViewer = () => {
     setPreviewPanorama(null);
   }, []);
 
-  /** Helper Functions **/
+  /** Helper Functions Defined Inside the Component **/
 
   // Function to create the red marker
-  function createMarker() {
+  const createMarker = () => {
     const markerGeometry = new THREE.SphereGeometry(0.1, 16, 16);
     const markerMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000 });
     return new THREE.Mesh(markerGeometry, markerMaterial);
-  }
+  };
 
   // Function to create a captured image plane
-  function createCapturedPlane(texture, width, height, elevation = 0) {
+  const createCapturedPlane = (texture, width, height, elevation = 0) => {
     // Adjust plane height based on elevation to account for perspective distortion (optional)
     let adjustedHeight = height;
     if (Math.abs(elevation) > 60) { // Near the poles
       adjustedHeight *= 1.2; // Increase height by 20%
     }
-    
+
     const geometry = new THREE.PlaneGeometry(width, adjustedHeight, 8, 8); // Segments optimized
     const material = new THREE.MeshBasicMaterial({ map: texture, side: THREE.FrontSide });
     return new THREE.Mesh(geometry, material);
-  }
+  };
 
   // Function to add a middle pointer to a captured plane
-  function addMiddlePointer(capturedPlane, azimuthDeg, elevationDeg) {
+  const addMiddlePointer = (capturedPlane, azimuthDeg, elevationDeg) => {
     // Only add pointer if azimuth and elevation are valid numbers
     if (typeof azimuthDeg !== 'number' || typeof elevationDeg !== 'number') return;
 
@@ -690,10 +680,10 @@ const PanoramaViewer = () => {
 
     // Animate the pointer (pulsating effect)
     animatePointer(pointer);
-  }
+  };
 
   // Function to animate the pointer (pulsating effect)
-  function animatePointer(pointer) {
+  const animatePointer = (pointer) => {
     const scaleFactor = 1.2;
     const duration = 1000; // 1 second
 
@@ -703,24 +693,15 @@ const PanoramaViewer = () => {
       .yoyo(true)
       .repeat(Infinity)
       .start();
-  }
+  };
 
   // Function to stop the video stream
-  function stopVideoStream(video) {
+  const stopVideoStream = (video) => {
     if (video.srcObject) {
       const tracks = video.srcObject.getTracks();
       tracks.forEach(track => track.stop());
     }
-  }
-
-  // Function to check if the marker is centered in the view
-  function isMarkerCentered(camera, marker) {
-    const vector = new THREE.Vector3().copy(marker.position).project(camera);
-    const dx = vector.x;
-    const dy = vector.y;
-    const threshold = 0.05; // Adjust as needed for sensitivity
-    return Math.abs(dx) < threshold && Math.abs(dy) < threshold;
-  }
+  };
 
   // Function to apply a simple sharpening filter using Canvas
   const sharpenImage = (image) => {
@@ -865,46 +846,24 @@ const PanoramaViewer = () => {
           boxShadow: '0 0 15px rgba(0,0,0,0.5)'
         }}
       >
-        {/* Stability Indicator */}
-        <div style={{ marginBottom: '10px', display: 'flex', alignItems: 'center' }}>
-          <span
-            style={{
-              width: '10px',
-              height: '10px',
-              borderRadius: '50%',
-              backgroundColor: isStable ? '#4CAF50' : '#f44336',
-              marginRight: '8px',
-              transition: 'background-color 0.3s',
-            }}
-          ></span>
-          <span style={{ fontSize: '14px' }}>
-            {isStable ? 'Device is steady' : 'Hold still for clear capture'}
-          </span>
-        </div>
-
         {/* Capture Button */}
-        {queueReady && captureCount < maxCaptures && captureQueueRef.current.length > 0 && !firstCaptureDoneRef.current && (
+        {queueReady && captureCount < maxCaptures && captureQueueRef.current.length > 0 && !isPanoramaComplete && (
           <button
             onClick={captureImage}
-            disabled={!isStable} // Disable button if not stable
             style={{
               padding: '12px 25px',
-              background: isStable ? '#4CAF50ee' : '#ffffffee',
+              background: '#4CAF50ee',
               border: 'none',
-              cursor: isStable ? 'pointer' : 'not-allowed',
+              cursor: 'pointer',
               marginBottom: '15px',
               borderRadius: '5px',
               fontWeight: 'bold',
               fontSize: '16px',
               transition: 'background 0.3s, box-shadow 0.3s, cursor 0.3s',
-              boxShadow: isStable ? '0 0 10px #4CAF50' : 'none',
+              boxShadow: '0 0 10px #4CAF50',
             }}
-            onMouseOver={(e) => {
-              if (isStable) e.target.style.background = '#4CAF50';
-            }}
-            onMouseOut={(e) => {
-              e.target.style.background = isStable ? '#4CAF50ee' : '#ffffffee';
-            }}
+            onMouseOver={(e) => e.target.style.background = '#4CAF50'}
+            onMouseOut={(e) => e.target.style.background = '#4CAF50ee'}
           >
             Capture
           </button>
@@ -916,9 +875,9 @@ const PanoramaViewer = () => {
         {/* Capture Status */}
         <div style={{ marginTop: '10px', fontSize: '14px' }}>
           <strong>Captures:</strong> {captureCount} / {maxCaptures} <br />
-          {queueReady && captureQueueRef.current.length > 0 && (
+          {queueReady && captureCount < maxCaptures && (
             <span>
-              Next Capture - Azimuth: {captureQueueRef.current[0].azimuth}°, Elevation: {captureQueueRef.current[0].elevation}°
+              Next Capture - Azimuth: {captureQueueRef.current[0]?.azimuth || 'N/A'}°, Elevation: {captureQueueRef.current[0]?.elevation || 'N/A'}°
             </span>
           )}
         </div>
@@ -936,6 +895,13 @@ const PanoramaViewer = () => {
               <img key={index} src={thumb} alt={`Capture ${index + 1}`} style={{ width: '50px', height: 'auto', borderRadius: '4px' }} />
             ))}
           </div>
+        )}
+        
+        {/* Additional Guidance */}
+        {isStable ? (
+          <div style={{ marginTop: '10px', color: '#4CAF50' }}>Device is stable. Ready to capture!</div>
+        ) : (
+          <div style={{ marginTop: '10px', color: '#FF5722' }}>Device is moving. Please hold steady.</div>
         )}
       </div>
       
@@ -1114,30 +1080,30 @@ const PanoramaViewer = () => {
   );
 };
 
-/** Helper Functions **/
+/** Helper Functions Defined Inside the Component **/
 
 // Function to create the red marker
-function createMarker() {
+const createMarker = () => {
   const markerGeometry = new THREE.SphereGeometry(0.1, 16, 16);
   const markerMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000 });
   return new THREE.Mesh(markerGeometry, markerMaterial);
-}
+};
 
 // Function to create a captured image plane
-function createCapturedPlane(texture, width, height, elevation = 0) {
+const createCapturedPlane = (texture, width, height, elevation = 0) => {
   // Adjust plane height based on elevation to account for perspective distortion (optional)
   let adjustedHeight = height;
   if (Math.abs(elevation) > 60) { // Near the poles
     adjustedHeight *= 1.2; // Increase height by 20%
   }
-  
+
   const geometry = new THREE.PlaneGeometry(width, adjustedHeight, 8, 8); // Segments optimized
   const material = new THREE.MeshBasicMaterial({ map: texture, side: THREE.FrontSide });
   return new THREE.Mesh(geometry, material);
-}
+};
 
 // Function to add a middle pointer to a captured plane
-function addMiddlePointer(capturedPlane, azimuthDeg, elevationDeg) {
+const addMiddlePointer = (capturedPlane, azimuthDeg, elevationDeg) => {
   // Only add pointer if azimuth and elevation are valid numbers
   if (typeof azimuthDeg !== 'number' || typeof elevationDeg !== 'number') return;
 
@@ -1154,10 +1120,10 @@ function addMiddlePointer(capturedPlane, azimuthDeg, elevationDeg) {
 
   // Animate the pointer (pulsating effect)
   animatePointer(pointer);
-}
+};
 
 // Function to animate the pointer (pulsating effect)
-function animatePointer(pointer) {
+const animatePointer = (pointer) => {
   const scaleFactor = 1.2;
   const duration = 1000; // 1 second
 
@@ -1167,7 +1133,7 @@ function animatePointer(pointer) {
     .yoyo(true)
     .repeat(Infinity)
     .start();
-}
+};
 
 export default PanoramaViewer;
 
