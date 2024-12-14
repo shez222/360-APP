@@ -170,7 +170,7 @@ const PanoramaViewer = () => {
     // Add a Semi-Transparent Sphere as a Reference (Visible from Inside)
     const sphereGeometry = new THREE.SphereGeometry(sphereRadius, 64, 64);
     const sphereMaterial = new THREE.MeshBasicMaterial({
-      color: 0x44aa88,
+      color: 0x000000,
       transparent: true,
       opacity: 0.3,
       side: THREE.BackSide // Ensures visibility from inside
