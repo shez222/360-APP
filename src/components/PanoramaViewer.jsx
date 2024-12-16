@@ -543,13 +543,15 @@ const PanoramaViewer = () => {
         ctx.drawImage(renderer.domElement, 0, 0, planeWidth, planeHeight);
         // Get the image data
         const dataURL = canvas.toDataURL('image/jpeg');
+        console.log(`Image ${index + 1}: Azimuth: ${azimuth}, Elevation: ${elevation} Data URL: ${dataURL}`);
+        
         const blob = dataURLToBlob(dataURL);
         const filename = `e${elevation}_a${azimuth}.jpg`;
         formData.append('images', blob, filename);
       });
 
       // Send POST request to the backend
-      const response = await axios.post('http://192.168.0.118:5000/stitch', formData, {
+      const response = await axios.post('http://192.168.0.118:8080/stitch', formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
