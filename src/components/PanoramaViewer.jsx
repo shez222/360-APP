@@ -48,12 +48,11 @@ const PanoramaViewer = () => {
   }, [sphereRadius, hfov, vfov]);
 
   // **Updated Elevation Levels Order: Start from Equator and Move Upward then Downward**
-  // This ensures captures begin at the Equator, move up to Zenith, then down to Nadir.
   const elevationLevels = useMemo(() => [0, 30, 60, 90, -30, -60, -90], []);
 
   // **Updated Azimuthal Increments Based on Your Specification**
   const azimuthIncrements = useMemo(() => ({
-    0: 40,     // Equator: 9 captures (28° increments) for ~30% overlap
+    0: 40,     // Equator: 9 captures (40° increments)
     30: 45,    // +30°: 8 captures (45° increments)
     60: 60,    // +60°: 6 captures (60° increments)
     90: 360,   // Zenith: 1 capture (360° increments)
@@ -63,7 +62,7 @@ const PanoramaViewer = () => {
   }), []);
 
   // **Total Captures Calculation: 42**
-  // 0°: 13 + 30°: 8 + 60°: 6 + 90°: 1 + -30°: 8 + -60°: 6 + -90°: 1 = **43 captures**
+  // 0°: 9 + 30°: 8 + 60°: 6 + 90°: 1 + -30°: 8 + -60°: 6 + -90°: 4 = **42 captures**
   const maxCaptures = useMemo(() => {
     return elevationLevels.reduce((total, elev) => {
       const increment = azimuthIncrements[elev] || 60; // Default to 60° if not defined
@@ -80,6 +79,27 @@ const PanoramaViewer = () => {
   // State to indicate when the capture queue is ready
   const [queueReady, setQueueReady] = useState(false);
 
+  // Initialize the capture queue in the desired order
+  useEffect(() => {
+    const initializeQueue = () => {
+      const queue = [];
+      elevationLevels.forEach(elev => {
+        const increment = azimuthIncrements[elev] || 60;
+        const captures = Math.ceil(360 / increment);
+        for (let i = 0; i < captures; i++) {
+          queue.push({ azimuth: i * increment, elevation: elev });
+        }
+      });
+      // Ensure the queue has exactly maxCaptures images
+      while (queue.length > maxCaptures) {
+        queue.pop();
+      }
+      captureQueueRef.current = queue;
+      setQueueReady(true); // Indicate that the queue is ready
+    };
+    initializeQueue();
+  }, [elevationLevels, azimuthIncrements, maxCaptures]);
+
   // Refs for mutable variables
   const captureCountRef = useRef(0);
   const capturingRef = useRef(false);
@@ -91,8 +111,7 @@ const PanoramaViewer = () => {
   const [showFlash, setShowFlash] = useState(false); // For visual feedback
   const [isPanoramaComplete, setIsPanoramaComplete] = useState(false);
   const [previewPanorama, setPreviewPanorama] = useState(null);
-  const [capturedImages, setCapturedImages] = useState([]); // Store captured images with metadata
-  const [isUploading, setIsUploading] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [error, setError] = useState(null);
 
@@ -284,23 +303,8 @@ const PanoramaViewer = () => {
 
     if (!renderer || !scene || !videoPlane || !marker || !hiddenCanvas || !video) return;
     if (queue.length === 0) {
-      setInstructions("All captures completed. Uploading images for stitching...");
+      setInstructions("All captures completed. Preview your panorama!");
       setIsPanoramaComplete(true);
-
-      // **Hide videoPlane and marker after completion**
-      if (videoPlaneRef.current) {
-        videoPlaneRef.current.visible = false;
-      }
-      if (markerRef.current) {
-        markerRef.current.visible = false;
-      }
-
-      // **Stop all tweens to prevent residual animations**
-      TWEEN.removeAll();
-
-      // Start the upload process
-      uploadCapturedImages();
-
       return;
     }
 
@@ -324,12 +328,7 @@ const PanoramaViewer = () => {
 
         // Create a plane for the captured image with FrontSide
         const capturedPlane = createCapturedPlane(capturedTexture, planeWidth, planeHeight, elevation);
-        capturedPlane.userData = {
-          azimuth: azimuth,
-          elevation: elevation,
-          isCaptured: true,
-          filename: `e${elevation}_a${azimuth}.jpg` // Assign filename based on metadata
-        };
+        capturedPlane.userData.isCaptured = true; // Tag for potential removal/reset
         scene.add(capturedPlane);
 
         // Place the captured plane on the sphere at the current azimuth and elevation
@@ -337,15 +336,6 @@ const PanoramaViewer = () => {
 
         // Store the captured plane reference
         capturedPlanesRef.current.push(capturedPlane);
-
-        // Add captured image to the state with metadata
-        setCapturedImages(prev => [
-          ...prev,
-          {
-            filename: `e${elevation}_a${azimuth}.jpg`,
-            dataURL: dataURL
-          }
-        ]);
 
         // If there is a previous captured plane, add a middle pointer to it
         if (capturedPlanesRef.current.length > 1) {
@@ -384,22 +374,8 @@ const PanoramaViewer = () => {
 
         // Check if all captures are done
         if (captureCountRef.current >= maxCaptures) {
-          setInstructions("All captures completed. Uploading images for stitching...");
+          setInstructions("All captures completed. Preview your panorama!");
           setIsPanoramaComplete(true);
-
-          // **Hide videoPlane and marker after completion**
-          if (videoPlaneRef.current) {
-            videoPlaneRef.current.visible = false;
-          }
-          if (markerRef.current) {
-            markerRef.current.visible = false;
-          }
-
-          // **Stop all tweens to prevent residual animations**
-          TWEEN.removeAll();
-
-          // Start the upload process
-          uploadCapturedImages();
         }
 
         resolve();
@@ -459,7 +435,7 @@ const PanoramaViewer = () => {
     setInstructions("Keep your device straight and press 'Capture' to take the first image at the Equator.");
     setIsPanoramaComplete(false);
     setPreviewPanorama(null);
-    setCapturedImages([]);
+    setUploadProgress(0);
     setError(null);
 
     // Reset the capture queue
@@ -499,34 +475,30 @@ const PanoramaViewer = () => {
 
   // Function to preview the panorama
   const previewPanoramaHandler = useCallback(() => {
+    // Create a canvas to capture the current panorama view
+    const canvas = document.createElement('canvas');
     const renderer = rendererRef.current;
     const scene = sceneRef.current;
     const camera = cameraRef.current;
 
     if (!renderer || !scene || !camera) return;
 
-    // Create a render target to capture the current scene
-    const renderTarget = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight);
-    renderer.setRenderTarget(renderTarget);
-    renderer.render(scene, camera);
-    renderer.setRenderTarget(null);
-
-    // Read pixels from the render target
-    const pixels = new Uint8Array(window.innerWidth * window.innerHeight * 4);
-    renderer.readRenderTargetPixels(renderTarget, 0, 0, window.innerWidth, window.innerHeight, pixels);
-
-    // Create a canvas to draw the pixels
-    const canvas = document.createElement('canvas');
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
     const ctx = canvas.getContext('2d');
 
-    const imageData = ctx.createImageData(window.innerWidth, window.innerHeight);
-    imageData.data.set(pixels);
-    ctx.putImageData(imageData, 0, 0);
+    renderer.setSize(canvas.width, canvas.height);
+    renderer.render(scene, camera);
+    renderer.readRenderTargetPixels(
+      new THREE.WebGLRenderTarget(canvas.width, canvas.height),
+      0,
+      0,
+      canvas.width,
+      canvas.height,
+      new Uint8Array(4 * canvas.width * canvas.height)
+    );
 
-    // Convert canvas to data URL and set as preview
-    const dataURL = canvas.toDataURL('image/png');
+    const dataURL = renderer.domElement.toDataURL('image/png');
     setPreviewPanorama(dataURL);
   }, []);
 
@@ -541,6 +513,90 @@ const PanoramaViewer = () => {
   const closePreview = useCallback(() => {
     setPreviewPanorama(null);
   }, []);
+
+  // Function to upload images to the backend for stitching
+  const handleUploadAndStitch = useCallback(async () => {
+    if (captureCountRef.current !== maxCaptures) {
+      setError("Please complete all captures before uploading.");
+      return;
+    }
+
+    setUploading(true);
+    setError(null);
+
+    try {
+      const formData = new FormData();
+      capturedPlanesRef.current.forEach((plane, index) => {
+        // Extract the azimuth and elevation from the plane's position
+        const { azimuth, elevation } = getAzimuthElevationFromPosition(plane.position);
+        const canvas = document.createElement('canvas');
+        canvas.width = planeWidth;
+        canvas.height = planeHeight;
+        const ctx = canvas.getContext('2d');
+        // Render the plane to the canvas
+        const renderer = rendererRef.current;
+        const scene = new THREE.Scene();
+        scene.add(plane);
+        const tempCamera = new THREE.PerspectiveCamera(75, planeWidth / planeHeight, 0.1, 1000);
+        tempCamera.position.set(0, 0, 0);
+        renderer.render(scene, tempCamera);
+        ctx.drawImage(renderer.domElement, 0, 0, planeWidth, planeHeight);
+        // Get the image data
+        const dataURL = canvas.toDataURL('image/jpeg');
+        const blob = dataURLToBlob(dataURL);
+        const filename = `e${elevation}_a${azimuth}.jpg`;
+        formData.append('images', blob, filename);
+      });
+
+      // Send POST request to the backend
+      const response = await axios.post('http://localhost:5000/stitch', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+        onUploadProgress: (progressEvent) => {
+          const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+          setUploadProgress(percentCompleted);
+        }
+      });
+
+      if (response.status === 200) {
+        // Receive the stitched panorama
+        const panoramaBlob = new Blob([response.data], { type: 'image/jpeg' });
+        const panoramaURL = URL.createObjectURL(panoramaBlob);
+        setPreviewPanorama(panoramaURL);
+        setInstructions("Panorama stitched successfully! You can now preview and download it.");
+        setIsPanoramaComplete(true);
+      } else {
+        setError("Failed to stitch panorama. Please try again.");
+      }
+    } catch (err) {
+      console.error(err);
+      setError("An error occurred during the stitching process.");
+    } finally {
+      setUploading(false);
+      setUploadProgress(0);
+    }
+  }, [maxCaptures, planeHeight, planeWidth]);
+
+  // Helper Function to Convert Data URL to Blob
+  const dataURLToBlob = (dataURL) => {
+    const byteString = atob(dataURL.split(',')[1]);
+    const mimeString = dataURL.split(',')[0].split(':')[1].split(';')[0];
+    const ab = new ArrayBuffer(byteString.length);
+    const ia = new Uint8Array(ab);
+    for (let i = 0; i < byteString.length; i++) {
+      ia[i] = byteString.charCodeAt(i);
+    }
+    return new Blob([ab], { type: mimeString });
+  };
+
+  // Helper Function to Extract Azimuth and Elevation from Position
+  const getAzimuthElevationFromPosition = (position) => {
+    const r = Math.sqrt(position.x ** 2 + position.y ** 2 + position.z ** 2);
+    const elevation = Math.asin(position.y / r) * (180 / Math.PI);
+    const azimuth = Math.atan2(position.x, -position.z) * (180 / Math.PI);
+    return { azimuth: Math.round(azimuth), elevation: Math.round(elevation) };
+  };
 
   /** Helper Functions **/
 
@@ -614,66 +670,17 @@ const PanoramaViewer = () => {
     return Math.abs(dx) < threshold && Math.abs(dy) < threshold;
   }
 
-  // Function to upload captured images to the backend
-  const uploadCapturedImages = useCallback(async () => {
-    if (capturedImages.length === 0) {
-      setError("No images captured to upload.");
-      return;
-    }
-
-    setIsUploading(true);
-    setError(null);
-
-    const formData = new FormData();
-
-    capturedImages.forEach((img, index) => {
-      const blob = dataURLToBlob(img.dataURL);
-      formData.append('images', blob, img.filename);
-    });
-
-    try {
-      const response = await axios.post('http://localhost:5000/stitch', formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-        onUploadProgress: (progressEvent) => {
-          const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-          setUploadProgress(percentCompleted);
-        },
-      });
-
-      // Handle the response (stitched panorama)
-      const blob = new Blob([response.data], { type: 'image/jpeg' });
-      const panoramaURL = URL.createObjectURL(blob);
-      setPreviewPanorama(panoramaURL);
-      setInstructions("Panorama stitched successfully!");
-    } catch (err) {
-      console.error(err);
-      setError("Failed to stitch panorama. Please try again.");
-      setInstructions("Stitching failed. Please try again.");
-    } finally {
-      setIsUploading(false);
-      setUploadProgress(0);
-    }
-  }, [capturedImages]);
-
-  // Helper function to convert DataURL to Blob
-  const dataURLToBlob = (dataURL) => {
-    const arr = dataURL.split(',');
-    const mime = arr[0].match(/:(.*?);/)[1];
-    const bstr = atob(arr[1]);
-    let n = bstr.length;
-    const u8arr = new Uint8Array(n);
-    while(n--){
-        u8arr[n] = bstr.charCodeAt(n);
-    }
-    return new Blob([u8arr], {type:mime});
+  // Styles for Directional Arrows
+  const arrowButtonStyle = {
+    padding: '10px',
+    background: 'rgba(255,255,255,0.3)',
+    border: 'none',
+    borderRadius: '50%',
+    cursor: 'pointer',
+    fontSize: '20px',
+    color: '#fff',
+    transition: 'background 0.3s',
   };
-
-  // Function to upload captured images
-  const handleUpload = useCallback(() => {
-    uploadCapturedImages();
-  }, [uploadCapturedImages]);
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100vh', overflow: 'hidden', backgroundColor: '#000' }}>
@@ -778,13 +785,13 @@ const PanoramaViewer = () => {
           </button>
         )}
         
-        {/* Upload Button (Visible after all captures) */}
-        {isPanoramaComplete && capturedImages.length > 0 && !previewPanorama && (
+        {/* Upload & Stitch Button */}
+        {isPanoramaComplete && capturedPlanesRef.current.length === maxCaptures && (
           <button
-            onClick={handleUpload}
+            onClick={handleUploadAndStitch}
             style={{
               padding: '12px 25px',
-              background: '#00ff00ee',
+              background: '#4CAF50',
               border: 'none',
               cursor: 'pointer',
               marginBottom: '15px',
@@ -794,10 +801,11 @@ const PanoramaViewer = () => {
               color: '#fff',
               transition: 'background 0.3s',
             }}
-            onMouseOver={(e) => e.target.style.background = '#00ff00'}
-            onMouseOut={(e) => e.target.style.background = '#00ff00ee'}
+            disabled={uploading}
+            onMouseOver={(e) => e.target.style.background = '#45a049'}
+            onMouseOut={(e) => e.target.style.background = '#4CAF50'}
           >
-            {isUploading ? `Uploading... ${uploadProgress}%` : 'Upload & Stitch'}
+            {uploading ? `Uploading... ${uploadProgress}%` : 'Upload & Stitch'}
           </button>
         )}
         
@@ -816,12 +824,12 @@ const PanoramaViewer = () => {
         </div>
         
         {/* Upload Progress */}
-        {isUploading && (
+        {uploading && (
           <div style={{ marginTop: '10px', fontSize: '14px' }}>
             <strong>Uploading:</strong> {uploadProgress}%
           </div>
         )}
-
+        
         {/* Error Message */}
         {error && (
           <div style={{ marginTop: '10px', color: 'red', fontSize: '14px' }}>
@@ -885,7 +893,7 @@ const PanoramaViewer = () => {
       )}
       
       {/* Panorama Completion Overlay */}
-      {isPanoramaComplete && !previewPanorama && (
+      {isPanoramaComplete && capturedPlanesRef.current.length === maxCaptures && (
         <div
           style={{
             position: 'absolute',
@@ -903,7 +911,26 @@ const PanoramaViewer = () => {
           }}
         >
           <h2>Panorama Captured!</h2>
-          <p>Click the button below to upload and stitch your panorama.</p>
+          <button
+            onClick={handleUploadAndStitch}
+            style={{
+              padding: '12px 25px',
+              background: '#4CAF50',
+              border: 'none',
+              cursor: 'pointer',
+              marginTop: '20px',
+              borderRadius: '5px',
+              fontWeight: 'bold',
+              fontSize: '16px',
+              color: '#fff',
+              transition: 'background 0.3s',
+            }}
+            disabled={uploading}
+            onMouseOver={(e) => e.target.style.background = '#45a049'}
+            onMouseOut={(e) => e.target.style.background = '#4CAF50'}
+          >
+            {uploading ? `Uploading... ${uploadProgress}%` : 'Upload & Stitch'}
+          </button>
         </div>
       )}
       
@@ -1044,19 +1071,6 @@ function animatePointer(pointer) {
 }
 
 export default PanoramaViewer;
-
-// Styles for Directional Arrows
-const arrowButtonStyle = {
-  padding: '10px',
-  background: 'rgba(255,255,255,0.3)',
-  border: 'none',
-  borderRadius: '50%',
-  cursor: 'pointer',
-  fontSize: '20px',
-  color: '#fff',
-  transition: 'background 0.3s',
-};
-
 
 
 
