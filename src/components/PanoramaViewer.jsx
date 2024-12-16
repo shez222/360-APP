@@ -549,7 +549,7 @@ const PanoramaViewer = () => {
       });
 
       // Send POST request to the backend
-      const response = await axios.post('http://localhost:5000/stitch', formData, {
+      const response = await axios.post('http://192.168.0.118:5000/stitch', formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
