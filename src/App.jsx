@@ -1,11 +1,11 @@
 import React from "react";
-import PanoramaViewer from "./components/PanoramaViewer";
+import PanoramaUploader from "./components/PanoramaViewer";
 import "./index.css";
 
 const App = () => {
   return (
     <div className="App">
-      <PanoramaViewer />
+      <PanoramaUploader />
     </div>
   );
 };

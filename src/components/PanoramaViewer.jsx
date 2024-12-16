@@ -6,6 +6,7 @@ import { DeviceOrientationControls } from 'three-stdlib';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
 import { saveAs } from 'file-saver'; // For exporting panoramas
 import TWEEN from '@tweenjs/tween.js'; // For animations
+import axios from 'axios'; // For HTTP requests
 
 const PanoramaViewer = () => {
   // Refs for Three.js components
@@ -52,17 +53,17 @@ const PanoramaViewer = () => {
 
   // **Updated Azimuthal Increments Based on Your Specification**
   const azimuthIncrements = useMemo(() => ({
-    0: 40,     // Equator: 9 captures (40° increments)
+    0: 40,     // Equator: 9 captures (28° increments) for ~30% overlap
     30: 45,    // +30°: 8 captures (45° increments)
     60: 60,    // +60°: 6 captures (60° increments)
     90: 360,   // Zenith: 1 capture (360° increments)
     '-30': 45, // -30°: 8 captures (45° increments)
     '-60': 60, // -60°: 6 captures (60° increments)
-    '-90': 360  // Nadir: 1 captures (90° increments)
+    '-90': 360  // Nadir: 1 capture (360° increments)
   }), []);
 
   // **Total Captures Calculation: 42**
-  // 0°: 9 + 30°: 8 + 60°: 6 + 90°: 1 + -30°: 8 + -60°: 6 + -90°: 4 = **42 captures**
+  // 0°: 13 + 30°: 8 + 60°: 6 + 90°: 1 + -30°: 8 + -60°: 6 + -90°: 1 = **43 captures**
   const maxCaptures = useMemo(() => {
     return elevationLevels.reduce((total, elev) => {
       const increment = azimuthIncrements[elev] || 60; // Default to 60° if not defined
@@ -79,27 +80,6 @@ const PanoramaViewer = () => {
   // State to indicate when the capture queue is ready
   const [queueReady, setQueueReady] = useState(false);
 
-  // Initialize the capture queue in the desired order
-  useEffect(() => {
-    const initializeQueue = () => {
-      const queue = [];
-      elevationLevels.forEach(elev => {
-        const increment = azimuthIncrements[elev] || 60;
-        const captures = Math.ceil(360 / increment);
-        for (let i = 0; i < captures; i++) {
-          queue.push({ azimuth: i * increment, elevation: elev });
-        }
-      });
-      // Ensure the queue has exactly maxCaptures images
-      while (queue.length > maxCaptures) {
-        queue.pop();
-      }
-      captureQueueRef.current = queue;
-      setQueueReady(true); // Indicate that the queue is ready
-    };
-    initializeQueue();
-  }, [elevationLevels, azimuthIncrements, maxCaptures]);
-
   // Refs for mutable variables
   const captureCountRef = useRef(0);
   const capturingRef = useRef(false);
@@ -111,6 +91,10 @@ const PanoramaViewer = () => {
   const [showFlash, setShowFlash] = useState(false); // For visual feedback
   const [isPanoramaComplete, setIsPanoramaComplete] = useState(false);
   const [previewPanorama, setPreviewPanorama] = useState(null);
+  const [capturedImages, setCapturedImages] = useState([]); // Store captured images with metadata
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [error, setError] = useState(null);
 
   // Initialize Three.js Scene and Components
   useEffect(() => {
@@ -300,7 +284,7 @@ const PanoramaViewer = () => {
 
     if (!renderer || !scene || !videoPlane || !marker || !hiddenCanvas || !video) return;
     if (queue.length === 0) {
-      setInstructions("All captures completed. Preview your panorama!");
+      setInstructions("All captures completed. Uploading images for stitching...");
       setIsPanoramaComplete(true);
 
       // **Hide videoPlane and marker after completion**
@@ -313,6 +297,9 @@ const PanoramaViewer = () => {
 
       // **Stop all tweens to prevent residual animations**
       TWEEN.removeAll();
+
+      // Start the upload process
+      uploadCapturedImages();
 
       return;
     }
@@ -337,7 +324,12 @@ const PanoramaViewer = () => {
 
         // Create a plane for the captured image with FrontSide
         const capturedPlane = createCapturedPlane(capturedTexture, planeWidth, planeHeight, elevation);
-        capturedPlane.userData.isCaptured = true; // Tag for potential removal/reset
+        capturedPlane.userData = {
+          azimuth: azimuth,
+          elevation: elevation,
+          isCaptured: true,
+          filename: `e${elevation}_a${azimuth}.jpg` // Assign filename based on metadata
+        };
         scene.add(capturedPlane);
 
         // Place the captured plane on the sphere at the current azimuth and elevation
@@ -345,6 +337,15 @@ const PanoramaViewer = () => {
 
         // Store the captured plane reference
         capturedPlanesRef.current.push(capturedPlane);
+
+        // Add captured image to the state with metadata
+        setCapturedImages(prev => [
+          ...prev,
+          {
+            filename: `e${elevation}_a${azimuth}.jpg`,
+            dataURL: dataURL
+          }
+        ]);
 
         // If there is a previous captured plane, add a middle pointer to it
         if (capturedPlanesRef.current.length > 1) {
@@ -383,7 +384,7 @@ const PanoramaViewer = () => {
 
         // Check if all captures are done
         if (captureCountRef.current >= maxCaptures) {
-          setInstructions("All captures completed. Preview your panorama!");
+          setInstructions("All captures completed. Uploading images for stitching...");
           setIsPanoramaComplete(true);
 
           // **Hide videoPlane and marker after completion**
@@ -396,6 +397,9 @@ const PanoramaViewer = () => {
 
           // **Stop all tweens to prevent residual animations**
           TWEEN.removeAll();
+
+          // Start the upload process
+          uploadCapturedImages();
         }
 
         resolve();
@@ -455,7 +459,8 @@ const PanoramaViewer = () => {
     setInstructions("Keep your device straight and press 'Capture' to take the first image at the Equator.");
     setIsPanoramaComplete(false);
     setPreviewPanorama(null);
-    setQueueReady(false); // Temporarily set to false during reinitialization
+    setCapturedImages([]);
+    setError(null);
 
     // Reset the capture queue
     const newQueue = [];
@@ -609,17 +614,66 @@ const PanoramaViewer = () => {
     return Math.abs(dx) < threshold && Math.abs(dy) < threshold;
   }
 
-  // Styles for Directional Arrows
-  const arrowButtonStyle = {
-    padding: '10px',
-    background: 'rgba(255,255,255,0.3)',
-    border: 'none',
-    borderRadius: '50%',
-    cursor: 'pointer',
-    fontSize: '20px',
-    color: '#fff',
-    transition: 'background 0.3s',
+  // Function to upload captured images to the backend
+  const uploadCapturedImages = useCallback(async () => {
+    if (capturedImages.length === 0) {
+      setError("No images captured to upload.");
+      return;
+    }
+
+    setIsUploading(true);
+    setError(null);
+
+    const formData = new FormData();
+
+    capturedImages.forEach((img, index) => {
+      const blob = dataURLToBlob(img.dataURL);
+      formData.append('images', blob, img.filename);
+    });
+
+    try {
+      const response = await axios.post('http://localhost:5000/stitch', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+        onUploadProgress: (progressEvent) => {
+          const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+          setUploadProgress(percentCompleted);
+        },
+      });
+
+      // Handle the response (stitched panorama)
+      const blob = new Blob([response.data], { type: 'image/jpeg' });
+      const panoramaURL = URL.createObjectURL(blob);
+      setPreviewPanorama(panoramaURL);
+      setInstructions("Panorama stitched successfully!");
+    } catch (err) {
+      console.error(err);
+      setError("Failed to stitch panorama. Please try again.");
+      setInstructions("Stitching failed. Please try again.");
+    } finally {
+      setIsUploading(false);
+      setUploadProgress(0);
+    }
+  }, [capturedImages]);
+
+  // Helper function to convert DataURL to Blob
+  const dataURLToBlob = (dataURL) => {
+    const arr = dataURL.split(',');
+    const mime = arr[0].match(/:(.*?);/)[1];
+    const bstr = atob(arr[1]);
+    let n = bstr.length;
+    const u8arr = new Uint8Array(n);
+    while(n--){
+        u8arr[n] = bstr.charCodeAt(n);
+    }
+    return new Blob([u8arr], {type:mime});
   };
+
+  // Function to upload captured images
+  const handleUpload = useCallback(() => {
+    uploadCapturedImages();
+  }, [uploadCapturedImages]);
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100vh', overflow: 'hidden', backgroundColor: '#000' }}>
@@ -724,6 +778,29 @@ const PanoramaViewer = () => {
           </button>
         )}
         
+        {/* Upload Button (Visible after all captures) */}
+        {isPanoramaComplete && capturedImages.length > 0 && !previewPanorama && (
+          <button
+            onClick={handleUpload}
+            style={{
+              padding: '12px 25px',
+              background: '#00ff00ee',
+              border: 'none',
+              cursor: 'pointer',
+              marginBottom: '15px',
+              borderRadius: '5px',
+              fontWeight: 'bold',
+              fontSize: '16px',
+              color: '#fff',
+              transition: 'background 0.3s',
+            }}
+            onMouseOver={(e) => e.target.style.background = '#00ff00'}
+            onMouseOut={(e) => e.target.style.background = '#00ff00ee'}
+          >
+            {isUploading ? `Uploading... ${uploadProgress}%` : 'Upload & Stitch'}
+          </button>
+        )}
+        
         {/* Instructions */}
         <div style={{ marginBottom: '10px', fontSize: '16px' }}>{instructions}</div>
         
@@ -737,6 +814,20 @@ const PanoramaViewer = () => {
           <progress value={captureCount} max={maxCaptures} style={{ width: '100%', height: '10px' }}></progress>
           <span style={{ color: '#fff' }}>{` ${captureCount} / ${maxCaptures}`}</span>
         </div>
+        
+        {/* Upload Progress */}
+        {isUploading && (
+          <div style={{ marginTop: '10px', fontSize: '14px' }}>
+            <strong>Uploading:</strong> {uploadProgress}%
+          </div>
+        )}
+
+        {/* Error Message */}
+        {error && (
+          <div style={{ marginTop: '10px', color: 'red', fontSize: '14px' }}>
+            {error}
+          </div>
+        )}
       </div>
       
       {/* Reset Button */}
@@ -811,25 +902,8 @@ const PanoramaViewer = () => {
             boxShadow: '0 0 20px rgba(0,0,0,0.7)'
           }}
         >
-          <h2>Panorama Completed!</h2>
-          <button
-            onClick={previewPanoramaHandler}
-            style={{
-              padding: '12px 25px',
-              background: '#ffffffee',
-              border: 'none',
-              cursor: 'pointer',
-              marginTop: '20px',
-              borderRadius: '5px',
-              fontWeight: 'bold',
-              fontSize: '16px',
-              transition: 'background 0.3s',
-            }}
-            onMouseOver={(e) => e.target.style.background = '#ffffff'}
-            onMouseOut={(e) => e.target.style.background = '#ffffffee'}
-          >
-            Preview Panorama
-          </button>
+          <h2>Panorama Captured!</h2>
+          <p>Click the button below to upload and stitch your panorama.</p>
         </div>
       )}
       
@@ -970,6 +1044,1003 @@ function animatePointer(pointer) {
 }
 
 export default PanoramaViewer;
+
+// Styles for Directional Arrows
+const arrowButtonStyle = {
+  padding: '10px',
+  background: 'rgba(255,255,255,0.3)',
+  border: 'none',
+  borderRadius: '50%',
+  cursor: 'pointer',
+  fontSize: '20px',
+  color: '#fff',
+  transition: 'background 0.3s',
+};
+
+
+
+
+
+
+
+
+
+
+
+
+
+// // src/components/PanoramaViewer.jsx
+
+// import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+// import * as THREE from 'three';
+// import { DeviceOrientationControls } from 'three-stdlib';
+// import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
+// import { saveAs } from 'file-saver'; // For exporting panoramas
+// import TWEEN from '@tweenjs/tween.js'; // For animations
+
+// const PanoramaViewer = () => {
+//   // Refs for Three.js components
+//   const mountRef = useRef(null);
+//   const rendererRef = useRef(null);
+//   const cameraRef = useRef(null);
+//   const sceneRef = useRef(null);
+
+//   const videoPlaneRef = useRef(null);
+//   const videoTextureRef = useRef(null);
+//   const markerRef = useRef(null);
+//   const hiddenCanvasRef = useRef(null);
+
+//   // Sphere and placement settings
+//   const sphereRadius = 5; // Changed from 10 to 5 for better performance on mobile
+//   const offsetFromSurface = 0.01;
+
+//   // Global Configuration
+//   const hfov = 40; // Horizontal Field of View in degrees
+//   const vfov = 60; // Vertical Field of View in degrees
+
+//   // Helper function to convert degrees to radians
+//   const degToRad = (degrees) => degrees * (Math.PI / 180);
+
+//   // Function to calculate plane dimensions based on FOV and sphere radius
+//   const calculatePlaneDimensions = (sphereRadius, hfovDeg, vfovDeg) => {
+//     const hfovRad = degToRad(hfovDeg);
+//     const vfovRad = degToRad(vfovDeg);
+    
+//     const width = 2 * sphereRadius * Math.tan(hfovRad / 2);
+//     const height = 2 * sphereRadius * Math.tan(vfovRad / 2);
+    
+//     return { width, height };
+//   };
+
+//   // Calculate plane dimensions
+//   const { width: planeWidth, height: planeHeight } = useMemo(() => {
+//     return calculatePlaneDimensions(sphereRadius, hfov, vfov);
+//   }, [sphereRadius, hfov, vfov]);
+
+//   // **Updated Elevation Levels Order: Start from Equator and Move Upward then Downward**
+//   // This ensures captures begin at the Equator, move up to Zenith, then down to Nadir.
+//   const elevationLevels = useMemo(() => [0, 30, 60, 90, -30, -60, -90], []);
+
+//   // **Updated Azimuthal Increments Based on Your Specification**
+//   const azimuthIncrements = useMemo(() => ({
+//     0: 40,     // Equator: 9 captures (40° increments)
+//     30: 45,    // +30°: 8 captures (45° increments)
+//     60: 60,    // +60°: 6 captures (60° increments)
+//     90: 360,   // Zenith: 1 capture (360° increments)
+//     '-30': 45, // -30°: 8 captures (45° increments)
+//     '-60': 60, // -60°: 6 captures (60° increments)
+//     '-90': 360  // Nadir: 1 captures (90° increments)
+//   }), []);
+
+//   // **Total Captures Calculation: 42**
+//   // 0°: 9 + 30°: 8 + 60°: 6 + 90°: 1 + -30°: 8 + -60°: 6 + -90°: 4 = **42 captures**
+//   const maxCaptures = useMemo(() => {
+//     return elevationLevels.reduce((total, elev) => {
+//       const increment = azimuthIncrements[elev] || 60; // Default to 60° if not defined
+//       return total + Math.ceil(360 / increment);
+//     }, 0);
+//   }, [elevationLevels, azimuthIncrements]);
+
+//   // Capture Queue Initialization
+//   const captureQueueRef = useRef([]);
+
+//   // Ref to store all captured planes
+//   const capturedPlanesRef = useRef([]);
+
+//   // State to indicate when the capture queue is ready
+//   const [queueReady, setQueueReady] = useState(false);
+
+//   // Initialize the capture queue in the desired order
+//   useEffect(() => {
+//     const initializeQueue = () => {
+//       const queue = [];
+//       elevationLevels.forEach(elev => {
+//         const increment = azimuthIncrements[elev] || 60;
+//         const captures = Math.ceil(360 / increment);
+//         for (let i = 0; i < captures; i++) {
+//           queue.push({ azimuth: i * increment, elevation: elev });
+//         }
+//       });
+//       // Ensure the queue has exactly maxCaptures images
+//       while (queue.length > maxCaptures) {
+//         queue.pop();
+//       }
+//       captureQueueRef.current = queue;
+//       setQueueReady(true); // Indicate that the queue is ready
+//     };
+//     initializeQueue();
+//   }, [elevationLevels, azimuthIncrements, maxCaptures]);
+
+//   // Refs for mutable variables
+//   const captureCountRef = useRef(0);
+//   const capturingRef = useRef(false);
+//   const firstCaptureDoneRef = useRef(false);
+
+//   // State variables for UI
+//   const [instructions, setInstructions] = useState("Keep your device straight and press 'Capture' to take the first image at the Equator.");
+//   const [captureCount, setCaptureCount] = useState(0);
+//   const [showFlash, setShowFlash] = useState(false); // For visual feedback
+//   const [isPanoramaComplete, setIsPanoramaComplete] = useState(false);
+//   const [previewPanorama, setPreviewPanorama] = useState(null);
+
+//   // Initialize Three.js Scene and Components
+//   useEffect(() => {
+//     // Initialize Three.js Scene
+//     const scene = new THREE.Scene();
+//     scene.background = new THREE.Color(0x000000);
+//     sceneRef.current = scene;
+
+//     // Setup Camera
+//     const camera = new THREE.PerspectiveCamera(
+//       75,
+//       mountRef.current.clientWidth / mountRef.current.clientHeight,
+//       0.1,
+//       1000
+//     );
+//     camera.position.set(0, 0, 0);
+//     cameraRef.current = camera;
+
+//     // Setup Renderer
+//     const renderer = new THREE.WebGLRenderer({ antialias: true });
+//     renderer.setSize(mountRef.current.clientWidth, mountRef.current.clientHeight);
+//     renderer.setPixelRatio(window.devicePixelRatio);
+//     mountRef.current.appendChild(renderer.domElement);
+//     rendererRef.current = renderer;
+
+//     // Initialize Controls
+//     let controls;
+//     if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === 'function') {
+//       // For iOS 13+ devices, need to request permission
+//       DeviceOrientationEvent.requestPermission()
+//         .then(permissionState => {
+//           if (permissionState === 'granted') {
+//             controls = new DeviceOrientationControls(camera);
+//             controls.connect();
+//           } else {
+//             console.warn('Device Orientation permission denied. Falling back to OrbitControls.');
+//             controls = new OrbitControls(camera, renderer.domElement);
+//             configureOrbitControls(controls);
+//           }
+//         })
+//         .catch(console.error);
+//     } else if (window.DeviceOrientationEvent) {
+//       // Use DeviceOrientationControls for other mobile devices
+//       controls = new DeviceOrientationControls(camera);
+//       controls.connect();
+//     } else {
+//       // Use OrbitControls for desktop
+//       controls = new OrbitControls(camera, renderer.domElement);
+//       configureOrbitControls(controls);
+//     }
+
+//     // Add a Semi-Transparent Sphere as a Reference (Visible from Inside)
+//     const sphereGeometry = new THREE.SphereGeometry(sphereRadius, 64, 64);
+//     const sphereMaterial = new THREE.MeshBasicMaterial({
+//       color: 0x44aa88,
+//       transparent: true,
+//       opacity: 0.3,
+//       side: THREE.BackSide // Ensures visibility from inside
+//     });
+//     const sphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
+//     scene.add(sphere);
+
+//     // Setup Video Feed from the Back Camera
+//     const video = document.createElement('video');
+//     video.setAttribute('playsinline', '');
+//     video.autoplay = true;
+//     video.muted = true;
+
+//     navigator.mediaDevices
+//       .getUserMedia({ video: { facingMode: 'environment' }, audio: false })
+//       .then((stream) => {
+//         video.srcObject = stream;
+//         video.play();
+//       })
+//       .catch((err) => {
+//         console.error('Error accessing back camera: ', err);
+//         setInstructions("Unable to access the camera. Please check permissions.");
+//       });
+
+//     const videoTexture = new THREE.VideoTexture(video);
+//     videoTexture.minFilter = THREE.LinearFilter;
+//     videoTexture.magFilter = THREE.LinearFilter;
+//     videoTextureRef.current = videoTexture;
+
+//     // **Create the Video Plane with Updated Dimensions and Optimized Segments**
+//     const planeGeometry = new THREE.PlaneGeometry(planeWidth, planeHeight, 8, 8); // Segments reduced for performance
+//     const planeMaterial = new THREE.MeshBasicMaterial({ map: videoTexture, side: THREE.DoubleSide });
+//     const videoPlane = new THREE.Mesh(planeGeometry, planeMaterial);
+//     scene.add(videoPlane);
+//     videoPlaneRef.current = videoPlane;
+
+//     // Add a Marker (Red Dot) to Guide the User for Next Captures
+//     const marker = createMarker();
+//     scene.add(marker);
+//     markerRef.current = marker;
+
+//     // Place Video Plane and Marker at the first capture position
+//     if (captureQueueRef.current.length > 0) {
+//       const firstCapture = captureQueueRef.current[0];
+//       placeObjectOnSphere(videoPlane, firstCapture.azimuth, firstCapture.elevation);
+//       placeObjectOnSphere(marker, firstCapture.azimuth, firstCapture.elevation);
+//     }
+
+//     // Create a Hidden Canvas for Capturing Video Frames
+//     const hiddenCanvas = document.createElement('canvas');
+//     hiddenCanvas.width = video.videoWidth || 1280; // Higher resolution for better quality
+//     hiddenCanvas.height = video.videoHeight || 720;
+//     hiddenCanvasRef.current = hiddenCanvas;
+
+//     // Handle Window Resizing
+//     const onWindowResize = () => {
+//       camera.aspect = mountRef.current.clientWidth / mountRef.current.clientHeight;
+//       camera.updateProjectionMatrix();
+//       renderer.setSize(mountRef.current.clientWidth, mountRef.current.clientHeight);
+//     };
+//     window.addEventListener('resize', onWindowResize, false);
+
+//     // Animation Loop
+//     const animate = () => {
+//       requestAnimationFrame(animate);
+//       TWEEN.update(); // Update animations
+//       if (controls) controls.update();
+//       renderer.render(scene, camera);
+
+//       // After the First Capture, Auto-Capture When Aligned
+//       if (
+//         firstCaptureDoneRef.current &&
+//         !capturingRef.current &&
+//         captureCountRef.current < maxCaptures &&
+//         isMarkerCentered(camera, marker)
+//       ) {
+//         capturingRef.current = true;
+//         autoCaptureImage().then(() => {
+//           capturingRef.current = false;
+//         });
+//       }
+//     };
+//     animate();
+
+//     // Cleanup on Unmount
+//     return () => {
+//       window.removeEventListener('resize', onWindowResize);
+//       if (mountRef.current && renderer.domElement) {
+//         mountRef.current.removeChild(renderer.domElement);
+//       }
+//       renderer.dispose();
+//       if (controls instanceof DeviceOrientationControls) {
+//         controls.disconnect();
+//       } else if (controls instanceof OrbitControls) {
+//         controls.dispose();
+//       }
+//       stopVideoStream(video);
+//     };
+//   }, [captureQueueRef, maxCaptures, elevationLevels, azimuthIncrements, planeWidth, planeHeight]);
+
+//   // Configure OrbitControls (Helper Function)
+//   const configureOrbitControls = useCallback((controls) => {
+//     controls.enableDamping = true;
+//     controls.dampingFactor = 0.05;
+//     controls.minDistance = 1;
+//     controls.maxDistance = 100;
+//     controls.enablePan = false;
+//     controls.enableZoom = true;
+//   }, []);
+
+//   // Capture Image Function
+//   const captureImage = useCallback(() => {
+//     if (!capturingRef.current && captureCountRef.current < maxCaptures) {
+//       performCapture(false);
+//     }
+//   }, [maxCaptures]);
+
+//   // Auto Capture Function
+//   const autoCaptureImage = useCallback(async () => {
+//     return performCapture(true);
+//   }, []);
+
+//   // Perform Capture Function
+//   const performCapture = useCallback((isAuto) => {
+//     const renderer = rendererRef.current;
+//     const scene = sceneRef.current;
+//     const videoPlane = videoPlaneRef.current;
+//     const marker = markerRef.current;
+//     const hiddenCanvas = hiddenCanvasRef.current;
+//     const video = videoTextureRef.current?.image;
+//     const queue = captureQueueRef.current;
+
+//     if (!renderer || !scene || !videoPlane || !marker || !hiddenCanvas || !video) return;
+//     if (queue.length === 0) {
+//       setInstructions("All captures completed. Preview your panorama!");
+//       setIsPanoramaComplete(true);
+
+//       // **Hide videoPlane and marker after completion**
+//       if (videoPlaneRef.current) {
+//         videoPlaneRef.current.visible = false;
+//       }
+//       if (markerRef.current) {
+//         markerRef.current.visible = false;
+//       }
+
+//       // **Stop all tweens to prevent residual animations**
+//       TWEEN.removeAll();
+
+//       return;
+//     }
+
+//     const { azimuth, elevation } = queue.shift(); // Dequeue the next capture
+
+//     // Draw the current video frame to the hidden canvas
+//     const ctx = hiddenCanvas.getContext('2d');
+//     hiddenCanvas.width = video.videoWidth || 1280; // Ensure high resolution
+//     hiddenCanvas.height = video.videoHeight || 720;
+//     ctx.drawImage(video, 0, 0, hiddenCanvas.width, hiddenCanvas.height);
+
+//     // Get the Data URL from the Hidden Canvas
+//     const dataURL = hiddenCanvas.toDataURL('image/png');
+
+//     return new Promise((resolve) => {
+//       const img = new Image();
+//       img.onload = () => {
+//         // Create a texture from the captured image
+//         const capturedTexture = new THREE.Texture(img);
+//         capturedTexture.needsUpdate = true;
+
+//         // Create a plane for the captured image with FrontSide
+//         const capturedPlane = createCapturedPlane(capturedTexture, planeWidth, planeHeight, elevation);
+//         capturedPlane.userData.isCaptured = true; // Tag for potential removal/reset
+//         scene.add(capturedPlane);
+
+//         // Place the captured plane on the sphere at the current azimuth and elevation
+//         placeObjectOnSphere(capturedPlane, azimuth, elevation);
+
+//         // Store the captured plane reference
+//         capturedPlanesRef.current.push(capturedPlane);
+
+//         // If there is a previous captured plane, add a middle pointer to it
+//         if (capturedPlanesRef.current.length > 1) {
+//           const previousPlane = capturedPlanesRef.current[capturedPlanesRef.current.length - 2];
+//           const nextCapture = queue[0]; // Peek at the next capture without dequeuing
+
+//           if (nextCapture) {
+//             addMiddlePointer(previousPlane, nextCapture.azimuth, nextCapture.elevation);
+//           }
+//         }
+
+//         console.log(`Captured image placed at Azimuth: ${azimuth}°, Elevation: ${elevation}°`);
+
+//         // Increment capture count
+//         captureCountRef.current += 1;
+//         setCaptureCount(captureCountRef.current); // Update state for UI
+
+//         // Update Instructions
+//         if (!isAuto) {
+//           setInstructions("Image captured at Equator. Tilt your device upward to align with the next marker for automatic capture.");
+//           firstCaptureDoneRef.current = true;
+//         } else {
+//           setInstructions(`Image ${captureCountRef.current} captured. Continue aligning your device for the next capture.`);
+//         }
+
+//         // Move Video Plane and Marker to New Azimuth and Elevation
+//         if (queue.length > 0) { // Only move if there are more captures
+//           const nextCapture = queue[0];
+//           placeObjectOnSphere(videoPlaneRef.current, nextCapture.azimuth, nextCapture.elevation);
+//           placeObjectOnSphere(marker, nextCapture.azimuth, nextCapture.elevation);
+//         }
+
+//         // Flash Effect for Visual Feedback
+//         setShowFlash(true);
+//         setTimeout(() => setShowFlash(false), 200); // Flash duration: 200ms
+
+//         // Check if all captures are done
+//         if (captureCountRef.current >= maxCaptures) {
+//           setInstructions("All captures completed. Preview your panorama!");
+//           setIsPanoramaComplete(true);
+
+//           // **Hide videoPlane and marker after completion**
+//           if (videoPlaneRef.current) {
+//             videoPlaneRef.current.visible = false;
+//           }
+//           if (markerRef.current) {
+//             markerRef.current.visible = false;
+//           }
+
+//           // **Stop all tweens to prevent residual animations**
+//           TWEEN.removeAll();
+//         }
+
+//         resolve();
+//       };
+//       img.src = dataURL;
+//     });
+//   }, [planeHeight, planeWidth, maxCaptures]);
+
+//   // Helper Function to Place Objects on the Sphere
+//   const placeObjectOnSphere = useCallback((obj, azimuthDeg, elevationDeg) => {
+//     const r = sphereRadius - offsetFromSurface;
+//     const azimuthRad = THREE.MathUtils.degToRad(azimuthDeg);
+//     const elevationRad = THREE.MathUtils.degToRad(elevationDeg);
+
+//     const x = r * Math.cos(elevationRad) * Math.sin(azimuthRad);
+//     const y = r * Math.sin(elevationRad);
+//     const z = r * Math.cos(elevationRad) * Math.cos(azimuthRad);
+
+//     obj.position.set(x, y, -z); // Negative z to face inward
+//     obj.lookAt(0, 0, 0); // Ensure the plane faces the center
+//   }, [sphereRadius]);
+
+//   // Function to reset the panorama capture process
+//   const resetPanorama = useCallback(() => {
+//     const scene = sceneRef.current;
+//     const videoPlane = videoPlaneRef.current;
+//     const marker = markerRef.current;
+
+//     if (!scene || !videoPlane || !marker) return;
+
+//     // Remove all captured planes and their pointers
+//     capturedPlanesRef.current.forEach(plane => {
+//       // Remove pointers from the plane
+//       plane.children.forEach(child => {
+//         if (child.userData.isPointer) {
+//           scene.remove(child);
+//           child.geometry.dispose();
+//           child.material.dispose();
+//         }
+//       });
+//       // Remove the plane itself
+//       scene.remove(plane);
+//       plane.geometry.dispose();
+//       plane.material.dispose();
+//     });
+
+//     // Reset captured planes reference
+//     capturedPlanesRef.current = [];
+
+//     // Reset mutable refs
+//     captureCountRef.current = 0;
+//     capturingRef.current = false;
+//     firstCaptureDoneRef.current = false;
+
+//     // Reset state variables
+//     setCaptureCount(0);
+//     setInstructions("Keep your device straight and press 'Capture' to take the first image at the Equator.");
+//     setIsPanoramaComplete(false);
+//     setPreviewPanorama(null);
+//     setQueueReady(false); // Temporarily set to false during reinitialization
+
+//     // Reset the capture queue
+//     const newQueue = [];
+//     elevationLevels.forEach(elev => {
+//       const increment = azimuthIncrements[elev] || 60;
+//       const captures = Math.ceil(360 / increment);
+//       for (let i = 0; i < captures; i++) {
+//         newQueue.push({ azimuth: i * increment, elevation: elev });
+//       }
+//     });
+//     // Ensure the queue has exactly maxCaptures images
+//     while (newQueue.length > maxCaptures) {
+//       newQueue.pop();
+//     }
+//     captureQueueRef.current = newQueue;
+//     setQueueReady(true); // Re-indicate that the queue is ready
+
+//     // Reposition video plane and marker
+//     if (captureQueueRef.current.length > 0) {
+//       const firstCapture = captureQueueRef.current[0];
+//       placeObjectOnSphere(videoPlane, firstCapture.azimuth, firstCapture.elevation);
+//       placeObjectOnSphere(marker, firstCapture.azimuth, firstCapture.elevation);
+//     }
+
+//     // **Show videoPlane and marker again after reset**
+//     if (videoPlaneRef.current) {
+//       videoPlaneRef.current.visible = true;
+//     }
+//     if (markerRef.current) {
+//       markerRef.current.visible = true;
+//     }
+
+//     // **Restart all tweens**
+//     TWEEN.removeAll();
+//   }, [elevationLevels, azimuthIncrements, placeObjectOnSphere, maxCaptures]);
+
+//   // Function to preview the panorama
+//   const previewPanoramaHandler = useCallback(() => {
+//     const renderer = rendererRef.current;
+//     const scene = sceneRef.current;
+//     const camera = cameraRef.current;
+
+//     if (!renderer || !scene || !camera) return;
+
+//     // Create a render target to capture the current scene
+//     const renderTarget = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight);
+//     renderer.setRenderTarget(renderTarget);
+//     renderer.render(scene, camera);
+//     renderer.setRenderTarget(null);
+
+//     // Read pixels from the render target
+//     const pixels = new Uint8Array(window.innerWidth * window.innerHeight * 4);
+//     renderer.readRenderTargetPixels(renderTarget, 0, 0, window.innerWidth, window.innerHeight, pixels);
+
+//     // Create a canvas to draw the pixels
+//     const canvas = document.createElement('canvas');
+//     canvas.width = window.innerWidth;
+//     canvas.height = window.innerHeight;
+//     const ctx = canvas.getContext('2d');
+
+//     const imageData = ctx.createImageData(window.innerWidth, window.innerHeight);
+//     imageData.data.set(pixels);
+//     ctx.putImageData(imageData, 0, 0);
+
+//     // Convert canvas to data URL and set as preview
+//     const dataURL = canvas.toDataURL('image/png');
+//     setPreviewPanorama(dataURL);
+//   }, []);
+
+//   // Function to export the panorama
+//   const exportPanorama = useCallback(() => {
+//     if (previewPanorama) {
+//       saveAs(previewPanorama, 'panorama.png');
+//     }
+//   }, [previewPanorama]);
+
+//   // Function to close the panorama preview
+//   const closePreview = useCallback(() => {
+//     setPreviewPanorama(null);
+//   }, []);
+
+//   /** Helper Functions **/
+
+//   // Function to create the red marker
+//   function createMarker() {
+//     const markerGeometry = new THREE.SphereGeometry(0.1, 16, 16);
+//     const markerMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+//     return new THREE.Mesh(markerGeometry, markerMaterial);
+//   }
+
+//   // Function to create a captured image plane
+//   function createCapturedPlane(texture, width, height, elevation = 0) {
+//     // Adjust plane height based on elevation to account for perspective distortion (optional)
+//     let adjustedHeight = height;
+//     if (Math.abs(elevation) > 60) { // Near the poles
+//       adjustedHeight *= 1.2; // Increase height by 20%
+//     }
+    
+//     const geometry = new THREE.PlaneGeometry(width, adjustedHeight, 8, 8); // Segments optimized
+//     const material = new THREE.MeshBasicMaterial({ map: texture, side: THREE.FrontSide });
+//     return new THREE.Mesh(geometry, material);
+//   }
+
+//   // Function to add a middle pointer to a captured plane
+//   function addMiddlePointer(capturedPlane, azimuthDeg, elevationDeg) {
+//     // Only add pointer if azimuth and elevation are valid numbers
+//     if (typeof azimuthDeg !== 'number' || typeof elevationDeg !== 'number') return;
+
+//     const pointerGeometry = new THREE.SphereGeometry(0.05, 16, 16);
+//     const pointerMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff00 }); // Green color for pointers
+//     const pointer = new THREE.Mesh(pointerGeometry, pointerMaterial);
+
+//     // Position the pointer at the center of the captured plane
+//     pointer.position.set(0, 0, 0.01); // Slightly in front to prevent z-fighting
+//     capturedPlane.add(pointer);
+
+//     // Store metadata for the pointer
+//     pointer.userData = { azimuth: azimuthDeg, elevation: elevationDeg, isPointer: true };
+
+//     // Animate the pointer (pulsating effect)
+//     animatePointer(pointer);
+//   }
+
+//   // Function to animate the pointer (pulsating effect)
+//   function animatePointer(pointer) {
+//     const scaleFactor = 1.2;
+//     const duration = 1000; // 1 second
+
+//     new TWEEN.Tween(pointer.scale)
+//       .to({ x: scaleFactor, y: scaleFactor, z: scaleFactor }, duration / 2)
+//       .easing(TWEEN.Easing.Quadratic.Out)
+//       .yoyo(true)
+//       .repeat(Infinity)
+//       .start();
+//   }
+
+//   // Function to stop the video stream
+//   function stopVideoStream(video) {
+//     if (video.srcObject) {
+//       const tracks = video.srcObject.getTracks();
+//       tracks.forEach(track => track.stop());
+//     }
+//   }
+
+//   // Function to check if the marker is centered in the view
+//   function isMarkerCentered(camera, marker) {
+//     const vector = new THREE.Vector3().copy(marker.position).project(camera);
+//     const dx = vector.x;
+//     const dy = vector.y;
+//     const threshold = 0.05; // Adjust as needed for sensitivity
+//     return Math.abs(dx) < threshold && Math.abs(dy) < threshold;
+//   }
+
+//   // Styles for Directional Arrows
+//   const arrowButtonStyle = {
+//     padding: '10px',
+//     background: 'rgba(255,255,255,0.3)',
+//     border: 'none',
+//     borderRadius: '50%',
+//     cursor: 'pointer',
+//     fontSize: '20px',
+//     color: '#fff',
+//     transition: 'background 0.3s',
+//   };
+
+//   return (
+//     <div style={{ position: 'relative', width: '100%', height: '100vh', overflow: 'hidden', backgroundColor: '#000' }}>
+//       {/* Three.js Mount Point */}
+//       <div
+//         ref={mountRef}
+//         style={{
+//           width: '100%',
+//           height: '100%',
+//           display: 'block',
+//           position: 'absolute',
+//           top: 0,
+//           left: 0
+//         }}
+//       />
+      
+//       {/* Center Reticle */}
+//       <div 
+//         style={{
+//           position: 'absolute', 
+//           top: '50%', 
+//           left: '50%', 
+//           transform: 'translate(-50%, -50%)',
+//           zIndex: 2, 
+//           width: '30px', 
+//           height: '30px', 
+//           border: '3px solid white', 
+//           borderRadius: '50%',
+//           background: 'rgba(255,255,255,0.1)'
+//         }}
+//       />
+      
+//       {/* Directional Arrows */}
+//       <div
+//         style={{
+//           position: 'absolute',
+//           bottom: '20px',
+//           left: '50%',
+//           transform: 'translateX(-50%)',
+//           zIndex: 2,
+//           display: 'flex',
+//           gap: '10px'
+//         }}
+//       >
+//         <button
+//           onClick={() => {
+//             // Rotate clockwise
+//             cameraRef.current.rotation.y -= THREE.MathUtils.degToRad(10);
+//           }}
+//           style={arrowButtonStyle}
+//           aria-label="Rotate Clockwise"
+//         >
+//           &#8594;
+//         </button>
+//         <button
+//           onClick={() => {
+//             // Rotate counter-clockwise
+//             cameraRef.current.rotation.y += THREE.MathUtils.degToRad(10);
+//           }}
+//           style={arrowButtonStyle}
+//           aria-label="Rotate Counter-Clockwise"
+//         >
+//           &#8592;
+//         </button>
+//       </div>
+      
+//       {/* Instructions and Capture Button */}
+//       <div 
+//         style={{ 
+//           position: 'absolute', 
+//           top: '10px', 
+//           left: '10px', 
+//           zIndex: 1, 
+//           color: 'white', 
+//           background: 'rgba(0,0,0,0.7)', 
+//           padding: '20px',
+//           borderRadius: '8px',
+//           maxWidth: '350px',
+//           fontFamily: 'Arial, sans-serif',
+//           boxShadow: '0 0 15px rgba(0,0,0,0.5)'
+//         }}
+//       >
+//         {/* Capture Button */}
+//         {queueReady && captureCount < maxCaptures && captureQueueRef.current.length > 0 && !firstCaptureDoneRef.current && (
+//           <button
+//             onClick={captureImage}
+//             style={{
+//               padding: '12px 25px',
+//               background: '#ffffffee',
+//               border: 'none',
+//               cursor: 'pointer',
+//               marginBottom: '15px',
+//               borderRadius: '5px',
+//               fontWeight: 'bold',
+//               fontSize: '16px',
+//               transition: 'background 0.3s',
+//             }}
+//             onMouseOver={(e) => e.target.style.background = '#ffffff'}
+//             onMouseOut={(e) => e.target.style.background = '#ffffffee'}
+//           >
+//             Capture
+//           </button>
+//         )}
+        
+//         {/* Instructions */}
+//         <div style={{ marginBottom: '10px', fontSize: '16px' }}>{instructions}</div>
+        
+//         {/* Capture Status */}
+//         <div style={{ marginTop: '10px', fontSize: '14px' }}>
+//           <strong>Captures:</strong> {captureCount} / {maxCaptures}
+//         </div>
+        
+//         {/* Progress Bar */}
+//         <div style={{ marginTop: '10px' }}>
+//           <progress value={captureCount} max={maxCaptures} style={{ width: '100%', height: '10px' }}></progress>
+//           <span style={{ color: '#fff' }}>{` ${captureCount} / ${maxCaptures}`}</span>
+//         </div>
+//       </div>
+      
+//       {/* Reset Button */}
+//       {captureCount > 0 && !isPanoramaComplete && (
+//         <div
+//           style={{
+//             position: 'absolute',
+//             top: '10px',
+//             right: '10px',
+//             zIndex: 1, 
+//             color: 'white', 
+//             background: 'rgba(0,0,0,0.7)', 
+//             padding: '10px',
+//             borderRadius: '5px',
+//             maxWidth: '150px',
+//             fontFamily: 'Arial, sans-serif',
+//             boxShadow: '0 0 15px rgba(0,0,0,0.5)'
+//           }}
+//         >
+//           <button
+//             onClick={resetPanorama}
+//             style={{
+//               padding: '10px 20px',
+//               background: '#ffffffee',
+//               border: 'none',
+//               cursor: 'pointer',
+//               borderRadius: '5px',
+//               fontWeight: 'bold',
+//               fontSize: '14px',
+//               transition: 'background 0.3s',
+//             }}
+//             onMouseOver={(e) => e.target.style.background = '#ffffff'}
+//             onMouseOut={(e) => e.target.style.background = '#ffffffee'}
+//           >
+//             Reset
+//           </button>
+//         </div>
+//       )}
+      
+//       {/* Flash Effect for Visual Feedback */}
+//       {showFlash && (
+//         <div
+//           style={{
+//             position: 'absolute',
+//             top: 0,
+//             left: 0,
+//             width: '100%',
+//             height: '100%',
+//             backgroundColor: 'rgba(255,255,255,0.8)',
+//             zIndex: 3,
+//             pointerEvents: 'none',
+//             transition: 'opacity 0.2s',
+//           }}
+//         />
+//       )}
+      
+//       {/* Panorama Completion Overlay */}
+//       {isPanoramaComplete && !previewPanorama && (
+//         <div
+//           style={{
+//             position: 'absolute',
+//             top: '50%',
+//             left: '50%',
+//             transform: 'translate(-50%, -50%)',
+//             zIndex: 4,
+//             color: 'white',
+//             background: 'rgba(0,0,0,0.8)',
+//             padding: '25px',
+//             borderRadius: '10px',
+//             textAlign: 'center',
+//             fontFamily: 'Arial, sans-serif',
+//             boxShadow: '0 0 20px rgba(0,0,0,0.7)'
+//           }}
+//         >
+//           <h2>Panorama Completed!</h2>
+//           <button
+//             onClick={previewPanoramaHandler}
+//             style={{
+//               padding: '12px 25px',
+//               background: '#ffffffee',
+//               border: 'none',
+//               cursor: 'pointer',
+//               marginTop: '20px',
+//               borderRadius: '5px',
+//               fontWeight: 'bold',
+//               fontSize: '16px',
+//               transition: 'background 0.3s',
+//             }}
+//             onMouseOver={(e) => e.target.style.background = '#ffffff'}
+//             onMouseOut={(e) => e.target.style.background = '#ffffffee'}
+//           >
+//             Preview Panorama
+//           </button>
+//         </div>
+//       )}
+      
+//       {/* Panorama Preview Modal */}
+//       {previewPanorama && (
+//         <div
+//           style={{
+//             position: 'absolute',
+//             top: 0,
+//             left: 0,
+//             width: '100%',
+//             height: '100%',
+//             backgroundColor: 'rgba(0,0,0,0.9)',
+//             zIndex: 5,
+//             display: 'flex',
+//             alignItems: 'center',
+//             justifyContent: 'center'
+//           }}
+//         >
+//           <div
+//             style={{
+//               position: 'relative',
+//               width: '80%',
+//               height: '80%',
+//               backgroundColor: '#000',
+//               borderRadius: '10px',
+//               overflow: 'hidden',
+//               boxShadow: '0 0 30px rgba(0,0,0,0.8)'
+//             }}
+//           >
+//             <img 
+//               src={previewPanorama} 
+//               alt="Panorama Preview" 
+//               style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
+//             />
+//             <button
+//               onClick={exportPanorama}
+//               style={{
+//                 position: 'absolute',
+//                 bottom: '20px',
+//                 left: '50%',
+//                 transform: 'translateX(-50%)',
+//                 padding: '10px 20px',
+//                 background: '#ffffffee',
+//                 border: 'none',
+//                 cursor: 'pointer',
+//                 borderRadius: '5px',
+//                 fontWeight: 'bold',
+//                 fontSize: '14px',
+//                 transition: 'background 0.3s',
+//               }}
+//               onMouseOver={(e) => e.target.style.background = '#ffffff'}
+//               onMouseOut={(e) => e.target.style.background = '#ffffffee'}
+//             >
+//               Export Panorama
+//             </button>
+//             <button
+//               onClick={closePreview}
+//               style={{
+//                 position: 'absolute',
+//                 top: '20px',
+//                 right: '20px',
+//                 padding: '8px 16px',
+//                 background: '#ff4d4dee',
+//                 border: 'none',
+//                 cursor: 'pointer',
+//                 borderRadius: '5px',
+//                 fontWeight: 'bold',
+//                 fontSize: '14px',
+//                 color: '#fff',
+//                 transition: 'background 0.3s',
+//               }}
+//               onMouseOver={(e) => e.target.style.background = '#ff4d4d'}
+//               onMouseOut={(e) => e.target.style.background = '#ff4d4dee'}
+//             >
+//               Close
+//             </button>
+//           </div>
+//         </div>
+//       )}
+//     </div>
+//   );
+// };
+
+// /** Helper Functions **/
+
+// // Function to create the red marker
+// function createMarker() {
+//   const markerGeometry = new THREE.SphereGeometry(0.1, 16, 16);
+//   const markerMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+//   return new THREE.Mesh(markerGeometry, markerMaterial);
+// }
+
+// // Function to create a captured image plane
+// function createCapturedPlane(texture, width, height, elevation = 0) {
+//   // Adjust plane height based on elevation to account for perspective distortion (optional)
+//   let adjustedHeight = height;
+//   if (Math.abs(elevation) > 60) { // Near the poles
+//     adjustedHeight *= 1.2; // Increase height by 20%
+//   }
+  
+//   const geometry = new THREE.PlaneGeometry(width, adjustedHeight, 8, 8); // Segments optimized
+//   const material = new THREE.MeshBasicMaterial({ map: texture, side: THREE.FrontSide });
+//   return new THREE.Mesh(geometry, material);
+// }
+
+// // Function to add a middle pointer to a captured plane
+// function addMiddlePointer(capturedPlane, azimuthDeg, elevationDeg) {
+//   // Only add pointer if azimuth and elevation are valid numbers
+//   if (typeof azimuthDeg !== 'number' || typeof elevationDeg !== 'number') return;
+
+//   const pointerGeometry = new THREE.SphereGeometry(0.05, 16, 16);
+//   const pointerMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff00 }); // Green color for pointers
+//   const pointer = new THREE.Mesh(pointerGeometry, pointerMaterial);
+
+//   // Position the pointer at the center of the captured plane
+//   pointer.position.set(0, 0, 0.01); // Slightly in front to prevent z-fighting
+//   capturedPlane.add(pointer);
+
+//   // Store metadata for the pointer
+//   pointer.userData = { azimuth: azimuthDeg, elevation: elevationDeg, isPointer: true };
+
+//   // Animate the pointer (pulsating effect)
+//   animatePointer(pointer);
+// }
+
+// // Function to animate the pointer (pulsating effect)
+// function animatePointer(pointer) {
+//   const scaleFactor = 1.2;
+//   const duration = 1000; // 1 second
+
+//   new TWEEN.Tween(pointer.scale)
+//     .to({ x: scaleFactor, y: scaleFactor, z: scaleFactor }, duration / 2)
+//     .easing(TWEEN.Easing.Quadratic.Out)
+//     .yoyo(true)
+//     .repeat(Infinity)
+//     .start();
+// }
+
+// export default PanoramaViewer;
 
 
 
