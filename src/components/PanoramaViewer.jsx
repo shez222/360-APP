@@ -52,14 +52,22 @@ const PanoramaViewer = () => {
 
   // **Updated Azimuthal Increments Based on Your Specification**
   const azimuthIncrements = useMemo(() => ({
-    0: 40,     // Equator: 9 captures (40° increments)
-    30: 45,    // +30°: 8 captures (45° increments)
-    60: 60,    // +60°: 6 captures (60° increments)
+    0: 45,     // Equator: 9 captures (40° increments)
+    30: 55,    // +30°: 8 captures (45° increments)
+    60: 72,    // +60°: 6 captures (60° increments)
     90: 360,   // Zenith: 1 capture (360° increments)
-    '-30': 45, // -30°: 8 captures (45° increments)
-    '-60': 60, // -60°: 6 captures (60° increments)
-    '-90': 360  // Nadir: 4 captures (90° increments)
+    '-30': 55, // -30°: 8 captures (45° increments)
+    '-60': 72, // -60°: 6 captures (60° increments)
+    '-90': 360  // Nadir: 1 captures (90° increments)
   }), []);
+//   const azimuthIncrements = useMemo(() => ({
+//     0: 45,     // Equator: 8 captures (45° increments)
+//     30: 50,    // +30°: 7 captures (50° increments)
+//     60: 72,    // +60°: 5 captures (72° increments)
+
+//     '-30': 50, // -30°: 7 captures (50° increments)
+//     '-60': 72, // -60°: 5 captures (72° increments)
+// }), []);
 
   // **Total Captures Calculation: 42**
   // 0°: 9 + 30°: 8 + 60°: 6 + 90°: 1 + -30°: 8 + -60°: 6 + -90°: 4 = **42 captures**
